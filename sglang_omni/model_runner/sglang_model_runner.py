@@ -589,6 +589,7 @@ class SGLModelRunner(ModelRunner):
             "FunCosyVoice3SGLangModel": "sglang_omni.models.fun_cosyvoice3.sglang_model:FunCosyVoice3SGLangModel",
             "NemotronVoiceChatForCausalLM": "sglang_omni.models.nemotron_voicechat.thinker:NemotronVoiceChatForCausalLM",
             "NemotronVoiceChatTalker": "sglang_omni.models.nemotron_voicechat.talker:NemotronVoiceChatTalker",
+            "MiniCPMO": "sglang_omni.models.minicpm_o.components.sglang_thinker:MiniCPMOThinkerForCausalLM",
         }
         for arch, path in sglang_omni_models.items():
             module_path, _, attr = path.partition(":")
