@@ -65,6 +65,15 @@ class _StageSession:
     usage: ResourceUsage = field(default_factory=ResourceUsage)
 
 
+@dataclass
+class _Order:
+    """Arrival order of one session's commands: seq `served` runs next."""
+
+    issued: int = 0
+    served: int = 0
+    finished: set[int] = field(default_factory=set)
+
+
 class _SessionInbox(queue.Queue):
     def __init__(self, register):
         super().__init__()
@@ -98,8 +107,9 @@ class SessionScheduler(SimpleScheduler):
         self._commands: dict[str, threading.Event] = {}
         self._session_lock = threading.Lock()
         self._closing = False
-        self._tickets = {}
-        self._tails = {}
+        self._tickets: dict[str, tuple[tuple[str, int], int]] = {}
+        self._orders: dict[tuple[str, int], _Order] = {}
+        self._served = threading.Condition(self._session_lock)
         super().__init__(
             self._compute,
             max_concurrency=max_concurrency,
@@ -115,23 +125,27 @@ class SessionScheduler(SimpleScheduler):
         ref = command["ref"]
         key = (ref["session_id"], ref["incarnation"])
         with self._session_lock:
-            done = threading.Event()
-            ticket = (key, self._tails.get(key), done)
-            self._tickets[message.request_id] = ticket
-            self._tails[key] = ticket
+            order = self._orders.setdefault(key, _Order())
+            self._tickets[message.request_id] = (key, order.issued)
+            order.issued += 1
 
     def _finish_command(self, request_id) -> None:
-        with self._session_lock:
+        with self._served:
             ticket = self._tickets.pop(request_id, None)
-            if ticket is not None:
-                key, _, done = ticket
-                done.set()
-                tail = self._tails.get(key)
-                cursor = tail
-                while cursor is not None and cursor[2].is_set():
-                    cursor = cursor[1]
-                if cursor is None:
-                    self._tails.pop(key, None)
+            if ticket is None:
+                return
+            key, seq = ticket
+            order = self._orders.get(key)
+            if order is None:
+                return
+            # Note (Junnan Li): An aborted command can finish before its predecessors ran.
+            order.finished.add(seq)
+            while order.served in order.finished:
+                order.finished.discard(order.served)
+                order.served += 1
+            if order.served == order.issued:
+                del self._orders[key]
+            self._served.notify_all()
 
     def _consume_if_aborted(self, request_id):
         aborted = super()._consume_if_aborted(request_id)
@@ -147,13 +161,18 @@ class SessionScheduler(SimpleScheduler):
             return self._ordinary_compute(payload)
         ref = command["ref"]
         key = (ref["session_id"], ref["incarnation"])
-        with self._session_lock:
-            ticket = self._tickets[payload.request_id]
         try:
-            predecessor = ticket[1]
-            while predecessor is not None:
-                predecessor[2].wait()
-                predecessor = predecessor[1]
+            with self._served:
+                # Note (Junnan Li): A request-level abort can consume this command's number
+                # before it runs (a stream message for the same request arrives first);
+                # such a command has no ticket left and must not wait.
+                ticket = self._tickets.get(payload.request_id)
+                if ticket is not None:
+                    key, seq = ticket
+                    self._served.wait_for(
+                        lambda: (order := self._orders.get(key)) is None
+                        or order.served >= seq
+                    )
             return self._compute_session(payload)
         finally:
             try:

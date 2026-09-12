@@ -171,3 +171,125 @@ def test_structured_chunk_wire_size_matches_msgpack():
 
     value = asdict(TimedChunk("text", 0, 0, 0, {"tokens": [1, 2]}))
     assert wire_size(value) == len(msgpack.packb(value, use_bin_type=True))
+
+
+def test_session_commands_run_in_arrival_order_even_when_one_is_aborted():
+    import queue
+    import threading
+
+    from sglang_omni.proto import StagePayload
+    from sglang_omni.proto.session import SESSION_METADATA_KEY
+    from sglang_omni.scheduling.messages import IncomingMessage
+
+    class BlockingHooks(Hooks):
+        def __init__(self):
+            super().__init__("source", queue.Queue())
+            self.entered, self.release = threading.Event(), threading.Event()
+
+        def append(self, state, chunk, payload, context):
+            self.events.put(("append", payload.request_id))
+            if payload.request_id == "first":
+                self.entered.set()
+                self.release.wait(5)
+            return payload
+
+    hooks = BlockingHooks()
+    scheduler = SessionScheduler(hooks, max_concurrency=3)
+
+    def command(rid, op):
+        return StagePayload(
+            rid,
+            OmniRequest(
+                None,
+                metadata={
+                    SESSION_METADATA_KEY: {
+                        "op": op,
+                        "ref": asdict(SessionRef("s")),
+                        "chunk": asdict(TimedChunk("audio", 0, 20, 0, b"x")),
+                    }
+                },
+            ),
+            {},
+        )
+
+    compute_registered(scheduler, command("open", "open"))
+    payloads = [command(rid, "append") for rid in ("first", "second", "third")]
+    for payload in payloads:
+        scheduler.inbox.put(IncomingMessage(payload.request_id, "new_request", payload))
+    messages = [scheduler.inbox.get_nowait() for _ in payloads]
+    threads = [threading.Thread(target=scheduler._compute, args=(messages[0].data,))]
+    threads[0].start()
+    assert hooks.entered.wait(5)
+    scheduler._aborted.add("second")
+    assert scheduler._consume_if_aborted("second")
+    threads.append(
+        threading.Thread(target=scheduler._compute, args=(messages[2].data,))
+    )
+    threads[1].start()
+    threads[1].join(0.2)
+    assert threads[1].is_alive(), "third command ran before the first finished"
+    hooks.release.set()
+    for thread in threads:
+        thread.join(5)
+    assert not any(thread.is_alive() for thread in threads)
+    order = []
+    while not hooks.events.empty():
+        event = hooks.events.get_nowait()
+        if event[0] == "append":
+            order.append(event[1])
+    assert order == ["first", "third"]
+    assert not scheduler._orders and not scheduler._tickets
+
+
+def test_command_finished_by_abort_before_running_does_not_wait():
+    import queue
+    import threading
+
+    from sglang_omni.proto import StagePayload
+    from sglang_omni.proto.session import SESSION_METADATA_KEY
+    from sglang_omni.scheduling.messages import IncomingMessage
+
+    events = queue.Queue()
+    scheduler = SessionScheduler(Hooks("source", events), max_concurrency=2)
+
+    def command(rid, op):
+        return StagePayload(
+            rid,
+            OmniRequest(
+                None,
+                metadata={
+                    SESSION_METADATA_KEY: {
+                        "op": op,
+                        "ref": asdict(SessionRef("s")),
+                        "chunk": asdict(TimedChunk("audio", 0, 20, 0, b"x")),
+                    }
+                },
+            ),
+            {},
+        )
+
+    compute_registered(scheduler, command("open", "open"))
+    payload = command("late", "close")
+    scheduler.inbox.put(IncomingMessage("late", "new_request", payload))
+    message = scheduler.inbox.get_nowait()
+    # A request-level abort consumed the number first; the command still runs.
+    scheduler._aborted.add("late")
+    assert scheduler._consume_if_aborted("late")
+    errors = []
+
+    def run():
+        try:
+            scheduler._compute(message.data)
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    worker.join(5)
+    assert not worker.is_alive(), "command waited for a number that was already served"
+    assert not errors, errors
+    seen = []
+    while not events.empty():
+        seen.append(events.get_nowait()[0])
+    assert seen == ["open", "close"]
+    assert not scheduler._orders and not scheduler._tickets
