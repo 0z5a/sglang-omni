@@ -17,7 +17,6 @@ tests/
     ├── benchmarks/
     │   ├── test_dataset_regressions.py
     │   └── test_runtime_metrics.py
-    ├── test_tune_ci_thresholds.py
     ├── ci/
     │   ├── test_cpu_contention.py
     │   ├── test_cpuset_pinning.py
@@ -86,6 +85,7 @@ tests/
     ├── audar_tts/
     │   └── test_pipeline.py
     ├── qwen3_omni/
+    │   ├── test_audio_encoder_batch_dedup.py
     │   ├── test_cli.py
     │   ├── test_code2wav.py
     │   ├── test_code2wav_batching.py
@@ -146,6 +146,11 @@ tests/
     ├── minimax_music3/
     │   ├── test_core.py
     │   └── test_request_builders.py
+    ├── nemotron_voicechat/
+    │   ├── test_checkpoint_shim.py
+    │   ├── test_paged_rollback.py
+    │   ├── test_request_builders.py
+    │   └── test_streaming_codec.py
     ├── qwen3_asr/
     │   ├── test_encoder_cuda_graph.py
     │   ├── test_pipeline.py
@@ -328,15 +333,16 @@ Relevant model CI ownership:
   `moss_transcribe_diarize_aishell4_long_results.json`,
   `moss_transcribe_diarize_aishell4_long90_results.json`, and
   `moss_transcribe_diarize_googletime_results.json`, and enforces calibrated
-  accuracy/speed thresholds generated from `tune-ci-thresholds`.
+  accuracy/speed thresholds generated with the private maintainer
+  [`calibrate-h100-ci` skill](https://github.com/zhaochenyang20/sglang-omni-calibration/tree/main/skills/calibrate-h100-ci).
 - `test_asr_ci_seedtts.py`: SeedTTS ASR correctness + speed via SGLang Omni
   router (`/v1/audio/transcriptions`) for the model preset selected through
   `ASR_CI_MODEL` (or `--asr-ci-model`; presets and thresholds live in
   `asr_ci_config.py`). Gates the full 1088-sample
   English and 2020-sample Chinese SeedTTS splits. It writes
   `asr_seedtts_en_results.json` and `asr_seedtts_zh_results.json` for
-  threshold calibration (`asr` in `tune-ci-thresholds`). Its stdout uses the
-  same boxed summary style as the other benchmark stages:
+  threshold calibration (`asr` in the external `calibrate-h100-ci` skill).
+  Its stdout uses the same boxed summary style as the other benchmark stages:
   `ASR WER Benchmark Result` followed by `ASR Speed Benchmark Result`.
 - `utils.py`: shared fixture/helpers for talker/TTS WER CI —
   stops the upstream model server, runs `delete_gpu_process.sh --kill-orphans`, then launches
@@ -425,6 +431,11 @@ Expected command:
 ```bash
 pytest tests/unit_test -q
 ```
+
+Select CPU cases with `-m "not accelerator"`. Run hardware cases with
+`-m accelerator` on a compatible accelerator; check the reported skips
+to confirm the intended hardware paths actually ran.
+
 Choose the location by the behavior contract being protected, not by the file
 that happened to contain an older version of the test.
 
@@ -463,17 +474,16 @@ that happened to contain an older version of the test.
     in `unit_test/pipeline/` integration tests and GPU benchmarks.
 - `unit_test/benchmarks/`: Benchmark dataset/loading regression tests plus
   runtime resource-monitoring, PID-scoping, aggregation, and provenance coverage.
-- `unit_test/test_tune_ci_thresholds.py`: Unit tests for
-  `.claude/skills/tune-ci-thresholds/tune.py` calibration tooling — sample-scope
-  discovery (`CONCURRENCY` must not be treated as a sample count), GPU cleanup
-  scoping for concurrent calibration groups, metric dispersion/outlier reporting,
-  Wilson accuracy intervals, and `merge-runs` validation for disjoint strict-ready
-  partitions. Run with the rest of the fast suite:
-
-  ```bash
-  pytest tests/unit_test/test_tune_ci_thresholds.py -q
-  ```
-
+  `test_omni_seedtts_warmup.py` checks separate concurrent warmup, output
+  isolation, failure reporting, disabled warmup, and CLI configuration using
+  the real benchmark runner with a fake speech generator.
+  - `test_realtime_asr_benchmark.py`: the realtime ASR benchmark client
+    (`benchmarks/realtime_asr/client.py`) against an in-process fake
+    `/v1/realtime` WebSocket server (packet splitting, wall-clock pacing,
+    manual commit, trailing silence, timeout reporting), and the metric
+    definitions in `benchmarks/realtime_asr/metrics.py` pinned with hand-built
+    traces (first-partial refresh-point lookup, partial gaps, committed→final,
+    protocol invariant violations, percentile summaries). No GPU or server.
 - `unit_test/utils/`: Shared utility tests:
   - audio loading helpers for data URIs, file URIs, HTTP URLs, timeout fallback,
     and mono/channel preservation, plus the 8 kHz telephony fixtures under
@@ -595,6 +605,16 @@ that happened to contain an older version of the test.
   - SGLang argument builders
   - backend policy and quantization compatibility contracts
   - tokenizer and preprocessing fallback behavior
+  - audio cache identity from complete decoded content, mixed-batch cache
+    hits, and cached output ownership across reused encoder buffers
+    (`test_pipeline.py`, `test_audio_encoder_batch_dedup.py`). The output
+    ownership case is marked `accelerator`; the cache-key cases use CPU.
+  - preprocessing dispatch defaults to serial `SimpleScheduler`;
+    `max_concurrency > 1` opts into `ThreadedSimpleScheduler`
+    (`test_pipeline.py`).
+  - threaded preprocessing request isolation, error propagation, and running
+    request cancellation, plus repeated remote-image loading against a local
+    HTTP server and media-loader cleanup on failure (`test_pipeline.py`).
   - memory flag contracts
   - colocation config and SGLang AR budget contracts
   - full-model fixture overrides target the preprocessing and thinker context
@@ -814,6 +834,14 @@ that happened to contain an older version of the test.
   lowering, reference encoding, model-runner lifecycle, flow matching, bounded
   acoustic state, vocoder batching, and streaming cleanup. CUDA Graph parity in
   `test_tail.py` is marked `accelerator`; the remaining tests run on CPU.
+
+- `unit_test/nemotron_voicechat/`: NemotronLabs VoiceChat request frame-count
+  contract (thinker tokens vs talker steps), streaming code2wav equivalence
+  with whole-utterance decoding, and checkpoint-shim isolation across
+  checkpoint switches. Talker rollback tests cover paged KV ownership across
+  stream waits and decode resumption using simulated decode preparation.
+  Tests run on CPU without model weights; request and rollback tests require
+  SGLang, but do not start an engine.
 
 - `unit_test/llada2_uni/`: LLaDA2-Uni request lowering to the upstream
   diffusion-language-model token-array contract.
