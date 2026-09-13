@@ -25,7 +25,7 @@ class TimedChunk:
     t_start_ms: float
     duration_ms: float
     seq: int
-    payload: Any
+    payload: bytes | dict[str, Any] | None
     format: str | None = None
     eos: bool = False
 
@@ -40,7 +40,7 @@ class OutputChunk:
     modality: str
     t_start_ms: float
     duration_ms: float
-    payload: Any
+    payload: bytes | dict[str, Any] | None
     format: str | None = None
     eos: bool = False
     kind: Literal["data", "input_done"] = "data"

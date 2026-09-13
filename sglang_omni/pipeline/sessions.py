@@ -8,7 +8,7 @@ import uuid
 from collections import deque
 from collections.abc import Coroutine
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable, Literal
 
 import msgpack
 
@@ -62,7 +62,7 @@ class CoordinatorSessions:
         self._sessions_stopping = False
         self._session_unavailable_stages: set[str] = set()
         self._sessions: dict[str, _Session] = {}
-        self._session_stream_handlers: dict[str, Any] = {}
+        self._session_stream_handlers: dict[str, Callable[[StreamMessage], None]] = {}
         self._session_cleanup_tasks: set[asyncio.Task] = set()
 
     def _owned_session_task(self, coroutine) -> asyncio.Task:
@@ -235,7 +235,7 @@ class CoordinatorSessions:
         input_seq: int,
         chunk: TimedChunk,
         *,
-        kind: str = "data",
+        kind: Literal["data", "input_done"] = "data",
     ) -> None:
         if session.closing or (session.ref != ref and kind != "input_done"):
             return
@@ -299,7 +299,7 @@ class CoordinatorSessions:
         *,
         owner: str | None = None,
         chunk: TimedChunk | None = None,
-    ) -> Any:
+    ) -> dict[str, Any]:
         ref = session.ref
         command = {
             "op": op,

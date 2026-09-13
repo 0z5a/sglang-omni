@@ -47,9 +47,10 @@ def test_open_usage_failure_releases_state():
     )
     with pytest.raises(RuntimeError, match="usage failed"):
         compute_registered(scheduler, StagePayload("one-open", request, {}))
-    assert not scheduler._sessions
     assert events.get_nowait()[0] == "open"
     assert events.get_nowait()[0] == "close"
+    with pytest.raises(RuntimeError, match="usage failed"):
+        compute_registered(scheduler, StagePayload("one-open-again", request, {}))
 
 
 def test_stage_capacity_is_aggregate():
@@ -68,7 +69,8 @@ def test_stage_capacity_is_aggregate():
         def usage(self, state):
             return ResourceUsage(bytes=state["bytes"])
 
-    scheduler = SessionScheduler(SizedHooks("source", queue.Queue()), max_state_bytes=3)
+    events = queue.Queue()
+    scheduler = SessionScheduler(SizedHooks("source", events), max_state_bytes=3)
 
     def invoke(sid, op, epoch=0):
         ref = asdict(SessionRef(sid, epoch=epoch))
@@ -80,12 +82,12 @@ def test_stage_capacity_is_aggregate():
     invoke("one", "open")
     with pytest.raises(QueueFullError):
         invoke("two", "open")
-    assert list(scheduler._sessions) == [("one", 1)]
+    assert events.get_nowait() == ("close", "source", "two")
     invoke("one", "abort", epoch=1)
     invoke("two", "open")
-    assert list(scheduler._sessions) == [("one", 1), ("two", 1)]
     scheduler.stop()
-    assert not scheduler._sessions
+    closed = sorted(events.get_nowait()[2] for _ in range(events.qsize()))
+    assert closed == ["one", "two"]
 
 
 def test_malformed_command_fails_inside_the_request_boundary():

@@ -230,35 +230,39 @@ class SessionScheduler(SimpleScheduler):
             ):
                 raise QueueFullError()
 
+    def _open_session(self, ref: SessionRef, request: OmniRequest) -> None:
+        key = (ref.session_id, ref.incarnation)
+        session = _StageSession(ref, None)
+        session.lock.acquire()
+        with self._session_lock:
+            if self._closing:
+                session.lock.release()
+                raise RuntimeError("session scheduler is stopping")
+            if key in self._sessions:
+                session.lock.release()
+                raise ValueError("session already opened")
+            if len(self._sessions) >= self.max_sessions:
+                session.lock.release()
+                raise QueueFullError()
+            self._sessions[key] = session
+        try:
+            session.state = self.hooks.open(ref, request)
+            self._update_usage(session)
+            if self._closing:
+                raise RuntimeError("session scheduler is stopping")
+        except BaseException:
+            self._close(key, session)
+            raise
+        finally:
+            session.lock.release()
+
     def _compute_session(self, payload: StagePayload) -> StagePayload:
         command = payload.request.metadata[SESSION_METADATA_KEY]
         ref = SessionRef(**command["ref"])
         key = (ref.session_id, ref.incarnation)
         op = command["op"]
         if op == "open":
-            session = _StageSession(ref, None)
-            session.lock.acquire()
-            with self._session_lock:
-                if self._closing:
-                    session.lock.release()
-                    raise RuntimeError("session scheduler is stopping")
-                if key in self._sessions:
-                    session.lock.release()
-                    raise ValueError("session already opened")
-                if len(self._sessions) >= self.max_sessions:
-                    session.lock.release()
-                    raise QueueFullError()
-                self._sessions[key] = session
-            try:
-                session.state = self.hooks.open(ref, payload.request)
-                self._update_usage(session)
-                if self._closing:
-                    raise RuntimeError("session scheduler is stopping")
-            except BaseException:
-                self._close(key, session)
-                raise
-            finally:
-                session.lock.release()
+            self._open_session(ref, payload.request)
             payload.data = {"opened": True}
             return payload
 

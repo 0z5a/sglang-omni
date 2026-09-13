@@ -97,7 +97,8 @@ def test_stop_after_last_hook_check_before_owner_unlock(op):
     scheduler = SessionScheduler(hooks)
     if op != "open":
         compute_registered(scheduler, command("open"))
-    lines, first_line = inspect.getsourcelines(scheduler._compute_session)
+    target = scheduler._open_session if op == "open" else scheduler._compute_session
+    lines, first_line = inspect.getsourcelines(target)
     if op == "open":
         pause_line = max(
             first_line + i
@@ -115,7 +116,7 @@ def test_stop_after_last_hook_check_before_owner_unlock(op):
     def trace(frame, event, arg):
         if (
             event == "line"
-            and frame.f_code is scheduler._compute_session.__func__.__code__
+            and frame.f_code is target.__func__.__code__
             and frame.f_lineno == pause_line
             and (op == "open" or "result" in frame.f_locals)
         ):
