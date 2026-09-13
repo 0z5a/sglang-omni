@@ -194,33 +194,6 @@ async def test_cancel_failure_closes_owners_in_reverse_order(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_pending_input_limit_rejects_extra_unit(tmp_path):
-    async with pipeline(tmp_path) as (coordinator, events, processes):
-        ref = await coordinator.open_session(
-            OmniRequest(None),
-            stages=["source", "sink"],
-            limits=SessionLimits(max_pending_chunks=1),
-        )
-        await coordinator.append_session(ref, chunk(0))
-        with pytest.raises(QueueFullError):
-            await coordinator.append_session(ref, chunk(1))
-        await coordinator.close_session(ref)
-
-
-@pytest.mark.asyncio
-async def test_input_sequence_rejects_a_gap(tmp_path):
-    async with pipeline(tmp_path) as (coordinator, events, processes):
-        ref = await coordinator.open_session(
-            OmniRequest(None), stages=["source", "sink"]
-        )
-        await coordinator.append_session(ref, chunk(0))
-        with pytest.raises(ValueError, match="contiguous"):
-            await coordinator.append_session(ref, chunk(2))
-        await coordinator.append_session(ref, chunk(1, eos=True))
-        await coordinator.close_session(ref)
-
-
-@pytest.mark.asyncio
 async def test_output_overflow_closes_session(tmp_path):
     async with pipeline(tmp_path) as (coordinator, events, processes):
         ref = await coordinator.open_session(

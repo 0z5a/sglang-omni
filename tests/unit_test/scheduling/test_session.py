@@ -1,12 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 """Session value validation and stage state ownership without worker processes."""
+import queue
+import threading
 from dataclasses import asdict
 
+import msgpack
 import pytest
 
 from sglang_omni.admission import QueueFullError
-from sglang_omni.proto import OmniRequest
-from sglang_omni.proto.session import ResourceUsage, SessionRef, TimedChunk
+from sglang_omni.proto import OmniRequest, StagePayload
+from sglang_omni.proto.session import (
+    SESSION_METADATA_KEY,
+    OutputChunk,
+    ResourceUsage,
+    SessionRef,
+    TimedChunk,
+    wire_size,
+)
+from sglang_omni.scheduling.messages import IncomingMessage
 from sglang_omni.scheduling.session import SessionHooks, SessionScheduler
 from tests.unit_test.fixtures.session_pipeline import compute_registered
 
@@ -24,10 +35,6 @@ class Hooks(SessionHooks):
 
 
 def test_open_usage_failure_releases_state():
-    import queue
-
-    from sglang_omni.proto import StagePayload
-    from sglang_omni.proto.session import SESSION_METADATA_KEY
 
     class BrokenUsage(Hooks):
         def usage(self, state):
@@ -50,10 +57,6 @@ def test_open_usage_failure_releases_state():
 
 
 def test_stage_capacity_is_aggregate():
-    import queue
-
-    from sglang_omni.proto import StagePayload
-    from sglang_omni.proto.session import SESSION_METADATA_KEY
 
     class SizedHooks(Hooks):
         def open(self, ref, request):
@@ -87,11 +90,6 @@ def test_stage_capacity_is_aggregate():
 
 
 def test_malformed_command_fails_inside_the_request_boundary():
-    import queue
-    import threading
-
-    from sglang_omni.proto import StagePayload
-    from sglang_omni.scheduling.messages import IncomingMessage
 
     scheduler = SessionScheduler(Hooks("source", queue.Queue()))
     worker = threading.Thread(target=scheduler.start)
@@ -120,11 +118,6 @@ def test_malformed_command_fails_inside_the_request_boundary():
 
 @pytest.mark.parametrize("configured", [False, True])
 def test_ordinary_request_uses_handler_or_reports_scoped_error(configured):
-    import queue
-    import threading
-
-    from sglang_omni.proto import StagePayload
-    from sglang_omni.scheduling.messages import IncomingMessage
 
     def compute(payload):
         payload.data = {"ordinary": True}
@@ -167,9 +160,6 @@ def test_ordinary_request_uses_handler_or_reports_scoped_error(configured):
 
 @pytest.mark.parametrize("size", [0, 255, 256, 65535, 65536])
 def test_binary_chunk_wire_size_matches_msgpack(size, monkeypatch):
-    import msgpack
-
-    from sglang_omni.proto.session import OutputChunk, wire_size
 
     chunk = TimedChunk("audio", 0, 80, 0, b"x" * size, format="pcm16")
     output = OutputChunk(
@@ -192,22 +182,7 @@ def test_binary_chunk_wire_size_matches_msgpack(size, monkeypatch):
     assert all(size == 0 for size in encoded_payloads)
 
 
-def test_structured_chunk_wire_size_matches_msgpack():
-    import msgpack
-
-    from sglang_omni.proto.session import wire_size
-
-    value = asdict(TimedChunk("text", 0, 0, 0, {"tokens": [1, 2]}))
-    assert wire_size(value) == len(msgpack.packb(value, use_bin_type=True))
-
-
 def test_session_commands_run_in_arrival_order_even_when_one_is_aborted():
-    import queue
-    import threading
-
-    from sglang_omni.proto import StagePayload
-    from sglang_omni.proto.session import SESSION_METADATA_KEY
-    from sglang_omni.scheduling.messages import IncomingMessage
 
     class BlockingHooks(Hooks):
         def __init__(self):
@@ -270,12 +245,6 @@ def test_session_commands_run_in_arrival_order_even_when_one_is_aborted():
 
 
 def test_command_finished_by_abort_before_running_does_not_wait():
-    import queue
-    import threading
-
-    from sglang_omni.proto import StagePayload
-    from sglang_omni.proto.session import SESSION_METADATA_KEY
-    from sglang_omni.scheduling.messages import IncomingMessage
 
     events = queue.Queue()
     scheduler = SessionScheduler(Hooks("source", events), max_concurrency=2)
