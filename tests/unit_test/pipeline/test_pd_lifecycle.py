@@ -280,6 +280,7 @@ def test_receiver_rejects_mismatched_pages_and_bounds_finished_ids(monkeypatch):
             metadata={"decode_continuation": continuation.encode()},
         )
         receiver.commit(message, receiver.reserve(message))
+        receiver.update_decode_headroom(message.request_id)
     with pytest.raises(RuntimeError, match="duplicate"):
         receiver.reserve(message)
     assert len(receiver._transfer_tombstones) == 2
