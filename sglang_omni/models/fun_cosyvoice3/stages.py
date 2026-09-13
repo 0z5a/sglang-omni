@@ -444,10 +444,11 @@ def _forward_flow_estimator(
         return decoder.forward_estimator(
             x, mask, mu, t, spks, cond, streaming=streaming
         )
-    if streaming:
+    if streaming and getattr(estimator, "streaming_mode", "fallback") == "fallback":
         raise ValueError(
             "Causal Flow requires a streaming-aware estimator; wrap TensorRT in "
-            "FlowEstimatorTRTModule with a PyTorch fallback estimator"
+            "FlowEstimatorTRTModule with a PyTorch fallback estimator, or set "
+            "flow_estimator_trt_streaming_mode='trt'"
         )
     return execute_flow_estimator(estimator, x, mask, mu, t, spks, cond)
 
@@ -543,6 +544,8 @@ def _attach_flow_estimator_trt(
     flow: Any,
     checkpoint_dir: str,
     device: str,
+    *,
+    streaming_mode: str = "trt",
 ) -> None:
     from sglang_omni.models.fun_cosyvoice3.flow_estimator_trt import (
         build_flow_estimator_trt,
@@ -566,16 +569,22 @@ def _attach_flow_estimator_trt(
     # path (hard-coded CFG batch=2, no profile check) under hop-batch.
     fallback = flow.decoder.estimator
     wrapper = build_flow_estimator_trt(
-        onnx_path, device, fallback=fallback, wrap_module=True
+        onnx_path,
+        device,
+        fallback=fallback,
+        wrap_module=True,
+        streaming_mode=streaming_mode,
     )
     # note (guozhihao-224): CosyVoice registers estimator as an nn.Module child;
     # delete first so assigning the TRT wrapper does not raise TypeError.
     del flow.decoder.estimator
     flow.decoder.estimator = wrapper
     logger.info(
-        "Fun-CosyVoice3 Flow DiT estimator is TensorRT Module (%s, max_cfg_batch=%d)",
+        "Fun-CosyVoice3 Flow DiT estimator is TensorRT Module "
+        "(%s, max_cfg_batch=%d, streaming_mode=%s)",
         onnx_path,
         wrapper.max_batch,
+        streaming_mode,
     )
 
 
@@ -648,6 +657,7 @@ def _load_cosyvoice3_flow_hift(
     fp16: bool = False,
     *,
     enable_flow_estimator_trt: bool = False,
+    flow_estimator_trt_streaming_mode: str = "trt",
 ) -> tuple[Any, Any]:
     _import_modelscope_preserving_root_handlers()
     try:
@@ -664,7 +674,12 @@ def _load_cosyvoice3_flow_hift(
     del cv.model.llm
     wrapped = FunCosyVoice3Flow(flow)
     if enable_flow_estimator_trt:
-        _attach_flow_estimator_trt(wrapped, checkpoint_dir, device)
+        _attach_flow_estimator_trt(
+            wrapped,
+            checkpoint_dir,
+            device,
+            streaming_mode=flow_estimator_trt_streaming_mode,
+        )
     return wrapped, hift
 
 
@@ -1254,6 +1269,7 @@ def create_vocoder_executor(
     flow_merge_pad_budget_percent: float = 25.0,
     enable_dit_torch_compile: bool = False,
     enable_flow_estimator_trt: bool = False,
+    flow_estimator_trt_streaming_mode: str = "trt",
     hift_dtype: str = "float32",
     hift_max_padding_waste: float = 1.5,
     token_hop_len: int = TOKEN_HOP_LEN,
@@ -1284,6 +1300,7 @@ def create_vocoder_executor(
         device=device,
         fp16=(dtype == "float16"),
         enable_flow_estimator_trt=enable_flow_estimator_trt,
+        flow_estimator_trt_streaming_mode=flow_estimator_trt_streaming_mode,
     )
     if enable_dit_torch_compile:
         _compile_dit_backbone(flow, compute_dtype=compute_dtype)

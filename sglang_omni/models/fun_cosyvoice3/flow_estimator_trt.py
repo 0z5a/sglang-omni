@@ -15,6 +15,29 @@ logger = logging.getLogger(__name__)
 
 _CFG_BATCH = 2
 _MEL_DIM = 80
+
+# note: causal streaming hops differ from the buffered path only by the DiT
+# attention mask (chunked vs. full). The shipped ONNX freezes streaming=False,
+# so a request must choose how causal hops run on the TRT engine:
+#   "trt"      -> run causal hops on the (non-streaming) TRT engine at full
+#                 speed, accepting non-streaming attention. Default.
+#   "fallback" -> run causal hops on the PyTorch DiT with streaming=True for
+#                 exact chunk-mask semantics, at eager speed. Use for A/B.
+STREAMING_MODE_TRT = "trt"
+STREAMING_MODE_FALLBACK = "fallback"
+_STREAMING_MODES = (STREAMING_MODE_TRT, STREAMING_MODE_FALLBACK)
+
+
+def _normalize_streaming_mode(mode: str) -> str:
+    normalized = str(mode).lower()
+    if normalized not in _STREAMING_MODES:
+        raise ValueError(
+            f"Unknown flow_estimator_trt streaming mode {mode!r}; "
+            f"expected one of {_STREAMING_MODES}"
+        )
+    return normalized
+
+
 # Must match the optimization profile built in `_convert_onnx_to_trt`.
 # note (guozhihao-224): streaming leftover finalize often exceeds the old
 # CosyVoice default of 3000 mel frames; capping there forced PyTorch
@@ -214,10 +237,12 @@ class FlowEstimatorTRT:
         *,
         io_dtype: torch.dtype,
         trt_concurrent: int = 1,
+        streaming_mode: str = STREAMING_MODE_TRT,
     ) -> None:
         self.trt_engine = engine
         self.io_dtype = io_dtype
         self.max_batch = _CFG_BATCH
+        self.streaming_mode = _normalize_streaming_mode(streaming_mode)
         self.device = _canonicalize_device(device)
         self._pool: queue.Queue = queue.Queue(maxsize=trt_concurrent)
         for _ in range(trt_concurrent):
@@ -245,10 +270,11 @@ class FlowEstimatorTRT:
         cond: torch.Tensor,
         streaming: bool = False,
     ) -> torch.Tensor:
-        if streaming:
+        if streaming and self.streaming_mode == STREAMING_MODE_FALLBACK:
             raise ValueError(
-                "The Flow-estimator TensorRT engine does not support streaming=True; "
-                "use FlowEstimatorTRTModule with a PyTorch fallback estimator"
+                "The Flow-estimator TensorRT engine does not support streaming=True "
+                "under streaming_mode='fallback'; use FlowEstimatorTRTModule with a "
+                "PyTorch fallback estimator, or set streaming_mode='trt'"
             )
         return execute_flow_estimator(self, x, mask, mu, t, spks, cond)
 
@@ -383,9 +409,13 @@ class FlowEstimatorTRTModule(torch.nn.Module):
 
     - runs TRT through ``execute_flow_estimator`` (CFG-pair chunking,
       profile-checked, dedicated stream);
-    - falls back to the original PyTorch DiT for causal streaming or when
-      ``T`` is outside ``[_PROFILE_MIN_TIME, _PROFILE_MAX_TIME]``. The official
-      ONNX export freezes ``streaming=False`` and cannot select a chunk mask.
+    - handles causal streaming hops per ``streaming_mode``: ``"trt"`` (default)
+      runs them on the non-streaming TRT engine at full speed; ``"fallback"``
+      routes them to the PyTorch DiT with ``streaming=True`` for exact
+      chunk-mask semantics. The official ONNX export freezes
+      ``streaming=False`` and cannot select a chunk mask on its own;
+    - falls back to the original PyTorch DiT when ``T`` is outside
+      ``[_PROFILE_MIN_TIME, _PROFILE_MAX_TIME]``.
     """
 
     def __init__(
@@ -395,12 +425,14 @@ class FlowEstimatorTRTModule(torch.nn.Module):
         *,
         min_time: int = _PROFILE_MIN_TIME,
         max_time: int = _PROFILE_MAX_TIME,
+        streaming_mode: str = STREAMING_MODE_TRT,
     ) -> None:
         super().__init__()
         self.trt = trt
         self.min_time = int(min_time)
         self.max_time = int(max_time)
         self.max_batch = int(trt.max_batch)
+        self._streaming_mode = _normalize_streaming_mode(streaming_mode)
         # Keep fallback off the module tree so CosyVoice's state_dict / to()
         # paths do not double-register DiT weights; we only call it on miss.
         self._fallback = fallback
@@ -415,11 +447,11 @@ class FlowEstimatorTRTModule(torch.nn.Module):
         cond: torch.Tensor,
         streaming: bool = False,
     ) -> torch.Tensor:
-        if streaming:
+        if streaming and self._streaming_mode == STREAMING_MODE_FALLBACK:
             if self._fallback is None:
                 raise ValueError(
-                    "The Flow-estimator TensorRT engine does not support "
-                    "streaming=True and no PyTorch fallback estimator is available"
+                    "streaming_mode='fallback' requires a PyTorch fallback "
+                    "estimator, but none is available"
                 )
             return self._fallback(x, mask, mu, t, spks, cond, streaming=True)
         frames = int(x.shape[2])
@@ -458,7 +490,9 @@ def build_flow_estimator_trt(
     trt_concurrent: int = 1,
     fallback: torch.nn.Module | None = None,
     wrap_module: bool = True,
+    streaming_mode: str = STREAMING_MODE_TRT,
 ) -> FlowEstimatorTRT | FlowEstimatorTRTModule:
+    streaming_mode = _normalize_streaming_mode(streaming_mode)
     try:
         import tensorrt as trt
     except ImportError as exc:
@@ -491,7 +525,10 @@ def build_flow_estimator_trt(
         device,
         io_dtype=io_dtype,
         trt_concurrent=trt_concurrent,
+        streaming_mode=streaming_mode,
     )
     if not wrap_module:
         return trt_engine
-    return FlowEstimatorTRTModule(trt_engine, fallback=fallback)
+    return FlowEstimatorTRTModule(
+        trt_engine, fallback=fallback, streaming_mode=streaming_mode
+    )

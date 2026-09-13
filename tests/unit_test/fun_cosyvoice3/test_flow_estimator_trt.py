@@ -233,8 +233,50 @@ def test_flow_estimator_trt_module_forwards_in_profile(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("cfg_batch", [2, 32])
+def test_streaming_mode_trt_runs_causal_hop_on_engine(cfg_batch) -> None:
+    class _NeverDiT(torch.nn.Module):
+        def forward(self, *args, **kwargs):
+            raise AssertionError("streaming_mode='trt' must not hit the fallback")
+
+    engine = _ExecuteTRT(max_batch=cfg_batch)
+    module = FlowEstimatorTRTModule(
+        engine, fallback=_NeverDiT(), streaming_mode="trt"
+    )
+    x = torch.zeros(cfg_batch, 1, 16)
+    out = module(
+        x,
+        torch.ones_like(x),
+        x,
+        torch.zeros(cfg_batch),
+        torch.zeros(cfg_batch, 1),
+        x,
+        streaming=True,
+    )
+    assert len(engine.calls) == 1
+    torch.testing.assert_close(out, x + 1.0)
+
+
+def test_streaming_mode_trt_still_falls_back_outside_profile() -> None:
+    class _CausalDiT(torch.nn.Module):
+        def forward(self, x, mask, mu, t, spks, cond, streaming=False):
+            assert streaming is True
+            return x + 2.0
+
+    engine = _ExecuteTRT(max_batch=2)
+    module = FlowEstimatorTRTModule(
+        engine, fallback=_CausalDiT(), min_time=4, max_time=10, streaming_mode="trt"
+    )
+    x = torch.zeros(2, 1, _PROFILE_MAX_TIME + 1)
+    out = module(
+        x, torch.ones_like(x), x, torch.zeros(2), torch.zeros(2, 1), x, streaming=True
+    )
+    assert not engine.calls
+    torch.testing.assert_close(out, x + 2.0)
+
+
+@pytest.mark.parametrize("cfg_batch", [2, 32])
 @pytest.mark.parametrize("frames", [2, 16, _PROFILE_MAX_TIME + 1])
-def test_streaming_trt_uses_causal_fallback(cfg_batch, frames) -> None:
+def test_streaming_mode_fallback_uses_causal_pytorch(cfg_batch, frames) -> None:
     class _CausalDiT(torch.nn.Module):
         def forward(self, x, mask, mu, t, spks, cond, streaming=False):
             assert streaming is True
@@ -242,7 +284,9 @@ def test_streaming_trt_uses_causal_fallback(cfg_batch, frames) -> None:
             return x + 2.0
 
     engine = _ExecuteTRT(max_batch=2)
-    module = FlowEstimatorTRTModule(engine, fallback=_CausalDiT())
+    module = FlowEstimatorTRTModule(
+        engine, fallback=_CausalDiT(), streaming_mode="fallback"
+    )
     x = torch.zeros(cfg_batch, 1, frames)
     out = module(
         x,
@@ -257,20 +301,28 @@ def test_streaming_trt_uses_causal_fallback(cfg_batch, frames) -> None:
     torch.testing.assert_close(out, x + 2.0)
 
 
-def test_streaming_trt_rejects_missing_causal_fallback() -> None:
+def test_streaming_mode_fallback_requires_causal_fallback() -> None:
     engine = _ExecuteTRT(max_batch=2)
-    module = FlowEstimatorTRTModule(engine)
+    module = FlowEstimatorTRTModule(engine, streaming_mode="fallback")
     x = torch.zeros(2, 1, 16)
-    with pytest.raises(ValueError, match="streaming=True"):
+    with pytest.raises(ValueError, match="streaming_mode='fallback'"):
         module(x, x, x, torch.zeros(2), torch.zeros(2, 1), x, streaming=True)
     assert not engine.calls
 
 
-def test_raw_trt_rejects_streaming_before_enqueue() -> None:
-    estimator = object.__new__(FlowEstimatorTRT)
+def test_unknown_streaming_mode_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown flow_estimator_trt streaming mode"):
+        FlowEstimatorTRTModule(_FakeTRTEngine(), streaming_mode="bogus")
+
+
+def test_raw_trt_rejects_streaming_only_in_fallback_mode() -> None:
+    fallback_engine = object.__new__(FlowEstimatorTRT)
+    fallback_engine.streaming_mode = "fallback"
     x = torch.zeros(2, 1, 16)
-    with pytest.raises(ValueError, match="streaming=True"):
-        estimator.execute(x, x, x, torch.zeros(2), torch.zeros(2, 1), x, streaming=True)
+    with pytest.raises(ValueError, match="streaming_mode='fallback'"):
+        fallback_engine.execute(
+            x, x, x, torch.zeros(2), torch.zeros(2, 1), x, streaming=True
+        )
 
 
 def test_flow_estimator_trt_module_falls_back_outside_profile() -> None:

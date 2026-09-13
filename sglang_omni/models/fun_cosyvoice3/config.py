@@ -84,6 +84,11 @@ class FunCosyVoice3PipelineConfig(PipelineConfig):
                 # note (guozhihao-224, chenyang):
                 # torch.compile is opt-in via enable_dit_torch_compile.
                 enable_flow_estimator_trt=False,
+                # note: when TRT is on, causal streaming hops default to the
+                # non-streaming TRT engine ("trt") for full speed; set
+                # "fallback" to run them on the PyTorch DiT with the exact
+                # chunk mask for an A/B WER comparison.
+                flow_estimator_trt_streaming_mode="trt",
                 token_hop_len=25,
                 token_max_hop_len=100,
                 disable_hop_growth=False,
