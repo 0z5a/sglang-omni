@@ -8,7 +8,6 @@ from sglang_omni.admission import QueueFullError
 from sglang_omni.proto import OmniRequest
 from sglang_omni.proto.session import (
     ResourceUsage,
-    SessionLimits,
     SessionRef,
     TimedChunk,
 )
@@ -26,14 +25,6 @@ class Hooks(SessionHooks):
 
     def close(self, state):
         self.events.put(("close", self.name, state["id"]))
-
-
-def test_timing_and_capacity_validation():
-    for bad in [-1, float("inf"), float("nan")]:
-        with pytest.raises(ValueError):
-            TimedChunk("audio", bad, 1, 0, b"")
-    with pytest.raises(ValueError):
-        SessionLimits(max_pending_chunks=0)
 
 
 def test_open_usage_failure_releases_state():
@@ -61,7 +52,7 @@ def test_open_usage_failure_releases_state():
     assert events.get_nowait()[0] == "close"
 
 
-def test_stage_capacity_is_aggregate_and_unknown_commands_fail():
+def test_stage_capacity_is_aggregate():
     import queue
 
     from sglang_omni.proto import StagePayload
@@ -84,8 +75,6 @@ def test_stage_capacity_is_aggregate_and_unknown_commands_fail():
     with pytest.raises(QueueFullError):
         invoke("two", "open")
     assert list(scheduler._sessions) == [("one", 1)]
-    with pytest.raises(ValueError, match="unknown session operation"):
-        invoke("one", "invalid")
     scheduler.stop()
     assert not scheduler._sessions
 

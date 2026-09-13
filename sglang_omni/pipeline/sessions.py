@@ -58,8 +58,6 @@ class CoordinatorSessions:
     """Coordinator-owned sessions over fixed stage routes."""
 
     def _init_sessions(self, max_sessions: int) -> None:
-        if max_sessions <= 0:
-            raise ValueError("max_sessions must be positive")
         self.max_sessions = max_sessions
         self._sessions_stopping = False
         self._session_unavailable_stages: set[str] = set()
@@ -290,8 +288,6 @@ class CoordinatorSessions:
                     finally:
                         session.pending_count -= 1
                         session.pending_bytes -= size
-        except asyncio.CancelledError:
-            raise
         except Exception as exc:
             session.error = exc
             self._owned_session_task(self._close_session_state(session))
@@ -418,8 +414,7 @@ class CoordinatorSessions:
             await self._cleanup_session(session)
 
     async def _cleanup_session(self, session: _Session) -> None:
-        session.closing = True
-        session.wake.set()
+        self._begin_session_close(session)
         if session.pump is not None and session.pump is not asyncio.current_task():
             try:
                 await asyncio.wait_for(
@@ -451,7 +446,7 @@ class CoordinatorSessions:
         # Never reclaim capacity on an unacknowledged close: a worker may still
         # own buffers or be finishing a command. Worker teardown owns that case.
         if session.cleanup_error is None:
-            self._sessions.pop(session.ref.session_id, None)
+            del self._sessions[session.ref.session_id]
 
     async def _shutdown_stage_sessions(self, selected: set[str] | None) -> None:
         affected = set(self._stages) if selected is None else selected

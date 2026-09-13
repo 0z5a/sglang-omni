@@ -97,8 +97,6 @@ class SessionScheduler(SimpleScheduler):
         max_concurrency: int = 4,
         max_state_bytes: int = 1 << 30,
     ):
-        if max_sessions <= 0 or max_state_bytes <= 0:
-            raise ValueError("session capacity must be positive")
         self.hooks = hooks
         self._ordinary_compute = compute_fn
         self.max_sessions = max_sessions
@@ -232,8 +230,6 @@ class SessionScheduler(SimpleScheduler):
         ref = SessionRef(**command["ref"])
         key = (ref.session_id, ref.incarnation)
         op = command["op"]
-        if op not in {"open", "append", "abort", "close"}:
-            raise ValueError("unknown session operation")
         if op == "open":
             session = _StageSession(ref, None)
             session.lock.acquire()
