@@ -6,11 +6,7 @@ import pytest
 
 from sglang_omni.admission import QueueFullError
 from sglang_omni.proto import OmniRequest
-from sglang_omni.proto.session import (
-    ResourceUsage,
-    SessionRef,
-    TimedChunk,
-)
+from sglang_omni.proto.session import ResourceUsage, SessionRef, TimedChunk
 from sglang_omni.scheduling.session import SessionHooks, SessionScheduler
 from tests.unit_test.fixtures.session_pipeline import compute_registered
 
