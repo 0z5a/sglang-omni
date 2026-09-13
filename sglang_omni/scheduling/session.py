@@ -120,8 +120,12 @@ class SessionScheduler(SimpleScheduler):
         command = message.data.request.metadata.get(SESSION_METADATA_KEY)
         if command is None:
             return
-        ref = command["ref"]
-        key = (ref["session_id"], ref["incarnation"])
+        try:
+            key = (command["ref"]["session_id"], command["ref"]["incarnation"])
+        except (KeyError, TypeError):
+            # Note (Junnan Li): put() runs on the stage loop; a malformed command
+            # must fail in _compute, inside the request error boundary.
+            return
         with self._session_lock:
             order = self._orders.setdefault(key, _Order())
             self._tickets[message.request_id] = (key, order.issued)
@@ -215,12 +219,13 @@ class SessionScheduler(SimpleScheduler):
         with self._session_lock:
             self._sessions.pop(key, None)
 
-    def _update_usage(self, session: _StageSession) -> None:
+    def _update_usage(self, session: _StageSession, *, admit: bool = True) -> None:
         usage = self.hooks.usage(session.state)
         with self._session_lock:
             session.usage = usage
             if (
-                sum(s.usage.bytes for s in self._sessions.values())
+                admit
+                and sum(s.usage.bytes for s in self._sessions.values())
                 > self.max_state_bytes
             ):
                 raise QueueFullError()
@@ -276,6 +281,7 @@ class SessionScheduler(SimpleScheduler):
                     raise ValueError("invalid abort epoch")
                 self.hooks.abort(session.state, ref)
                 session.ref = ref
+                self._update_usage(session, admit=False)
                 payload.data = {"aborted": True}
                 return payload
             if ref != session.ref:

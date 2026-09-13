@@ -59,15 +59,21 @@ def test_stage_capacity_is_aggregate():
     from sglang_omni.proto.session import SESSION_METADATA_KEY
 
     class SizedHooks(Hooks):
+        def open(self, ref, request):
+            return {"id": ref.session_id, "bytes": 2}
+
+        def abort(self, state, ref):
+            state["bytes"] = 0
+
         def usage(self, state):
-            return ResourceUsage(bytes=2)
+            return ResourceUsage(bytes=state["bytes"])
 
     scheduler = SessionScheduler(SizedHooks("source", queue.Queue()), max_state_bytes=3)
 
-    def invoke(sid, op):
+    def invoke(sid, op, epoch=0):
+        ref = asdict(SessionRef(sid, epoch=epoch))
         request = OmniRequest(
-            None,
-            metadata={SESSION_METADATA_KEY: {"op": op, "ref": asdict(SessionRef(sid))}},
+            None, metadata={SESSION_METADATA_KEY: {"op": op, "ref": ref}}
         )
         return compute_registered(scheduler, StagePayload(sid + op, request, {}))
 
@@ -75,8 +81,43 @@ def test_stage_capacity_is_aggregate():
     with pytest.raises(QueueFullError):
         invoke("two", "open")
     assert list(scheduler._sessions) == [("one", 1)]
+    invoke("one", "abort", epoch=1)
+    invoke("two", "open")
+    assert list(scheduler._sessions) == [("one", 1), ("two", 1)]
     scheduler.stop()
     assert not scheduler._sessions
+
+
+def test_malformed_command_fails_inside_the_request_boundary():
+    import queue
+    import threading
+
+    from sglang_omni.proto import StagePayload
+    from sglang_omni.scheduling.messages import IncomingMessage
+
+    scheduler = SessionScheduler(Hooks("source", queue.Queue()))
+    worker = threading.Thread(target=scheduler.start)
+    worker.start()
+    try:
+        request = OmniRequest(None, metadata={"omni_session": {"op": "append"}})
+        scheduler.inbox.put(
+            IncomingMessage("bad", "new_request", StagePayload("bad", request, {}))
+        )
+        output = scheduler.outbox.get(timeout=5)
+        assert output.request_id == "bad"
+        assert output.type == "error"
+        assert isinstance(output.data, KeyError)
+        request = OmniRequest(
+            None,
+            metadata={"omni_session": {"op": "open", "ref": asdict(SessionRef("ok"))}},
+        )
+        scheduler.inbox.put(
+            IncomingMessage("open", "new_request", StagePayload("open", request, {}))
+        )
+        assert scheduler.outbox.get(timeout=5).type == "result"
+    finally:
+        scheduler.stop()
+        worker.join(timeout=5)
 
 
 @pytest.mark.parametrize("configured", [False, True])
