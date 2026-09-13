@@ -36,6 +36,7 @@ def _create_pd_executor(
     model_path: str,
     *,
     pd_role: Literal["prefill", "decode"],
+    stage_name: str | None = None,
     device: str | None = None,
     gpu_id: int | None = None,
     dtype: str = "bfloat16",
@@ -50,6 +51,7 @@ def _create_pd_executor(
     builder_kwargs.update(builder_overrides)
     return MossTranscribeDiarizePDEngineBuilder(
         pd_role=pd_role,
+        stage_name=stage_name,
         **builder_kwargs,
     ).build(
         model_path,
@@ -63,6 +65,7 @@ def _create_pd_executor(
 def create_sglang_moss_transcribe_diarize_prefill_executor(
     model_path: str,
     *,
+    stage_name: str | None = None,
     device: str | None = None,
     gpu_id: int | None = None,
     dtype: str = "bfloat16",
@@ -72,6 +75,7 @@ def create_sglang_moss_transcribe_diarize_prefill_executor(
     return _create_pd_executor(
         model_path,
         pd_role="prefill",
+        stage_name=stage_name,
         device=device,
         gpu_id=gpu_id,
         dtype=dtype,
@@ -83,6 +87,7 @@ def create_sglang_moss_transcribe_diarize_prefill_executor(
 def create_sglang_moss_transcribe_diarize_decode_executor(
     model_path: str,
     *,
+    stage_name: str | None = None,
     device: str | None = None,
     gpu_id: int | None = None,
     dtype: str = "bfloat16",
@@ -92,6 +97,7 @@ def create_sglang_moss_transcribe_diarize_decode_executor(
     return _create_pd_executor(
         model_path,
         pd_role="decode",
+        stage_name=stage_name,
         device=device,
         gpu_id=gpu_id,
         dtype=dtype,

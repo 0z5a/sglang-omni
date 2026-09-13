@@ -24,10 +24,15 @@ class MossTranscribeDiarizePDEngineBuilder(MossTranscribeDiarizeEngineBuilder):
         self,
         *,
         pd_role: Literal["prefill", "decode"],
+        stage_name: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.pd_role = pd_role
+        # Note (Jiaxin Deng): KV routing addresses the expanded stage instance.
+        self.pd_stage_name = stage_name or (
+            PREFILL_STAGE if pd_role == "prefill" else DECODE_STAGE
+        )
 
     def setup_model_resources(
         self,
@@ -105,13 +110,13 @@ class MossTranscribeDiarizePDEngineBuilder(MossTranscribeDiarizeEngineBuilder):
         if self.pd_role == "prefill":
             return OmniPrefillScheduler(
                 **scheduler_kwargs,
-                stage_name=PREFILL_STAGE,
+                stage_name=self.pd_stage_name,
                 partner_stage=DECODE_STAGE,
                 state_builder=state_builder,
             )
         return OmniDecodeScheduler(
             **scheduler_kwargs,
-            stage_name=DECODE_STAGE,
+            stage_name=self.pd_stage_name,
             state_restorer=state_restorer,
             resume_schema=request_builders.MOSS_TD_PD_RESUME_SCHEMA,
         )

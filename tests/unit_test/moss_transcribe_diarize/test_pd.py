@@ -299,3 +299,41 @@ def test_moss_pd_builder_selects_explicit_scheduler_role(
     else:
         assert kwargs["resume_schema"] == MOSS_TD_PD_RESUME_SCHEMA
         assert kwargs["state_restorer"] is state_restorer
+
+
+@pytest.mark.parametrize("replica", [0, 1, 2])
+def test_decode_replica_factory_preserves_instance_for_kv_registration(
+    monkeypatch, replica
+):
+    from sglang_omni.scheduling import pd_scheduler
+
+    config = MossTranscribeDiarizePDPipelineConfig(model_path="moss-td")
+    instance = f"{DECODE_STAGE}@r{replica}"
+    stage = config.stage_named(DECODE_STAGE).model_copy(
+        update={"name": instance, "gpu": 1}
+    )
+    args = resolve_stage_factory_args(stage, config)
+    captured = {}
+
+    def scheduler(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    def build(builder, *args, **kwargs):
+        return builder._make_scheduler(
+            model_worker=object(),
+            tree_cache=object(),
+            req_to_token_pool=object(),
+            token_to_kv_pool_allocator=object(),
+            server_args=object(),
+            model_config=object(),
+            model_runner=object(),
+            request_builder=object(),
+            result_adapter=object(),
+            extra_scheduler_kwargs={},
+        )
+
+    monkeypatch.setattr(pd_scheduler, "OmniDecodeScheduler", scheduler)
+    monkeypatch.setattr(MossTranscribeDiarizePDEngineBuilder, "build", build)
+    create_sglang_moss_transcribe_diarize_decode_executor(**args)
+    assert captured["stage_name"] == instance
