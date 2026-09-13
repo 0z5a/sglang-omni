@@ -1469,6 +1469,7 @@ def test_moss_prompt_key_and_tail_guard_order(
         scheduler_module._Upstream, "process_batch_result", process_result
     )
     scheduler = object.__new__(OmniScheduler)
+    scheduler.tree_cache = SimpleNamespace(is_chunk_cache=lambda: False)
     plain = SimpleNamespace(output_ids=[])
     batch = SimpleNamespace(reqs=[first.req, second.req, plain])
     scheduler.process_batch_result(batch, None)
