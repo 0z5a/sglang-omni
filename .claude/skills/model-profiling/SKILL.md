@@ -36,6 +36,9 @@ here**:
 - `§2` — Layer 1 (GPU busy ratio) through Layer 5 (functional regression).
 - `§3` — checklist for the next executor / expected output shape.
 - `§4` — tool and script index (py-spy, CPU pinning, nvidia-smi, DCGM, nsys).
+- CosyVoice3 cookbook-default nsys regression (SeedTTS EN 200×c=16,
+  warmup/preload excluded from the SM window):
+  `cosyvoice3_default_nsys/PROTOCOL.md`
 
 The methodology doc gets corrected as new models are profiled. Always read
 the current version at invocation time — never assume the section numbers
@@ -213,7 +216,11 @@ that evidence exists.
 .claude/skills/model-profiling/
 ├── SKILL.md
 ├── METHODOLOGY.md                   # the 5-layer methodology itself (English only)
-└── PROMPT_TEMPLATE.md               # placeholder agent prompt filled in per model
+├── PROMPT_TEMPLATE.md               # placeholder agent prompt filled in per model
+└── cosyvoice3_default_nsys/         # repeatable default-serve nsys + SM window
+    ├── PROTOCOL.md
+    ├── compute_sm_window.py
+    └── probe_one_request.py
 ```
 
 ## Adding a new model
