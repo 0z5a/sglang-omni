@@ -99,6 +99,8 @@ class StreamingVocoderBase(
     set to ``audio_latents`` by continuous-latent vocoders.
     """
 
+    _pump_on_chunk_batch = True
+
     def __init__(
         self,
         compute_fn: Callable[[Any], Any] | None,
@@ -208,7 +210,8 @@ class StreamingVocoderBase(
                     self._emit_error(request_id, exc)
                     self._abort_state(request_id)
                     failed.append(request_id)
-            failed.extend(self._pump_streams())
+            if self._pump_on_chunk_batch:
+                failed.extend(self._pump_streams())
         for request_id in failed:
             self._cleanup_aborted_request(request_id)
 

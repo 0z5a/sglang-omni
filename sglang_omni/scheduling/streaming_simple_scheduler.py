@@ -146,8 +146,8 @@ class StreamingSimpleScheduler:
         try:
             while self._running:
                 if self._has_ready_work():
-                    # note(ratish): every queued message lands in state before a
-                    # step runs, so a step never decides on a stale view of the streams.
+                    # note (ratish): drain queued messages into state before a
+                    # step, so ranking never sees a stale inbox
                     try:
                         msg = self._get_batch_message()
                     except _queue_mod.Empty:
@@ -207,10 +207,10 @@ class StreamingSimpleScheduler:
             return None
 
     def _get_batch_message(self, *, timeout: float = 0.0) -> IncomingMessage:
-        """The one ordered message source: parked messages, then the inbox."""
         if self._pending_messages:
             return self._pending_messages.popleft()
-        return self.inbox.get(timeout=timeout)
+        else:
+            return self.inbox.get(timeout=timeout)
 
     # ------------------------------------------------------------------
     # Abort and cleanup
@@ -338,8 +338,8 @@ class StreamingSimpleScheduler:
                     break
                 batch_cost += msg_cost
             batch.append(msg)
-        # Do not re-read done-before-payload markers during this collection.
-        # Restore them ahead of any unconsumed pending or inbox messages.
+        # note (ratish): restore deferred messages in arrival order ahead of
+        # anything still sitting in pending or the inbox
         self._pending_messages.extendleft(reversed(deferred))
         return batch
 
