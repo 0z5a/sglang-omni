@@ -685,6 +685,12 @@ class Qwen3TTSIncrementalDecoder:
         context: Dynamo guards on both, and the step advances the state.
         """
         if self._compiled_kernel is None:
+            # note (luojiaxuan): every (batch, width) pair is its own static
+            # trace, and a full compile set runs to a few dozen of them, well
+            # past Dynamo's default of 8 recompiles per function.
+            torch._dynamo.config.recompile_limit = max(
+                torch._dynamo.config.recompile_limit, 64
+            )
             self._compiled_kernel = torch.compile(
                 self._decode_tensors, dynamic=False, fullgraph=True
             )

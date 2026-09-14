@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import logging
 import math
@@ -94,11 +95,18 @@ class Qwen3TTSIncrementalCodecCudaGraphRunner:
         min_free_gb: float = 3.0,
         enabled: bool = True,
         compile_fresh_frames: Sequence[int] = (),
+        cudnn_benchmark: bool = False,
         arena: Qwen3TTSCodecStateArena,
         stream_priority: int = 0,
     ) -> None:
         self._decoder = decoder
         self._compile_fresh_frames = frozenset(int(f) for f in compile_fresh_frames)
+        # note (luojiaxuan): cuDNN picks a convolution algorithm per shape the
+        # first time it sees it and the capture bakes that pick into the graph.
+        # Under the default heuristics the wider batches land on a CUDA-core
+        # kernel; benchmarking during warmup and capture times the candidates
+        # instead, and the replay keeps whatever won.
+        self._cudnn_benchmark = bool(cudnn_benchmark)
         # note (luojiaxuan): bound to an arena, a graph gathers its cohort's
         # rows from the arena, decodes, and scatters the advanced rows back,
         # all inside the replay. The host then only writes slot ids and codes.
@@ -279,45 +287,61 @@ class Qwen3TTSIncrementalCodecCudaGraphRunner:
         )
         graph: torch.cuda.CUDAGraph | None = None
         try:
-            self._warmup_capture_shape(key, static_codes, resources)
-            current_stream = torch.cuda.current_stream(self._device)
-            compiled = key.fresh_frames in self._compile_fresh_frames
-            static_index = self._scratch_index(key.batch_bucket)
-            resources.keepalives.append(static_index)
-            graph = torch.cuda.CUDAGraph()
-            resources.keepalives.append(graph)
-            capture_stream.wait_stream(current_stream)
-            try:
-                with (
-                    torch.inference_mode(),
-                    torch.cuda.graph(
-                        graph,
-                        pool=pool,
-                        stream=capture_stream,
-                        capture_error_mode="thread_local",
-                    ),
-                ):
-                    state = self._arena.gather_by_index(static_index)
-                    waveform = self._decoder.decode(
-                        static_codes, state, compiled=compiled
-                    )
-                    self._arena.scatter_by_index(static_index, state)
-            finally:
-                torch.cuda.set_stream(current_stream)
-            resources.keepalives.append(waveform)
-            current_stream.wait_stream(capture_stream)
-            capture_stream.synchronize()
-            return _CapturedIncrementalCodecGraph(
-                graph=graph,
-                static_codes=static_codes,
-                static_index=static_index,
-                waveform=waveform,
-            )
+            with self._cudnn_flags():
+                self._warmup_capture_shape(key, static_codes, resources)
+                current_stream = torch.cuda.current_stream(self._device)
+                compiled = key.fresh_frames in self._compile_fresh_frames
+                static_index = self._scratch_index(key.batch_bucket)
+                resources.keepalives.append(static_index)
+                graph = torch.cuda.CUDAGraph()
+                resources.keepalives.append(graph)
+                capture_stream.wait_stream(current_stream)
+                try:
+                    with (
+                        torch.inference_mode(),
+                        torch.cuda.graph(
+                            graph,
+                            pool=pool,
+                            stream=capture_stream,
+                            capture_error_mode="thread_local",
+                        ),
+                    ):
+                        state = self._arena.gather_by_index(static_index)
+                        waveform = self._decoder.decode(
+                            static_codes, state, compiled=compiled
+                        )
+                        self._arena.scatter_by_index(static_index, state)
+                finally:
+                    torch.cuda.set_stream(current_stream)
+                resources.keepalives.append(waveform)
+                current_stream.wait_stream(capture_stream)
+                capture_stream.synchronize()
+                return _CapturedIncrementalCodecGraph(
+                    graph=graph,
+                    static_codes=static_codes,
+                    static_index=static_index,
+                    waveform=waveform,
+                )
         except BaseException:
             synchronized = self._retain_capture_resources_if_unsynchronized(resources)
             if synchronized and graph is not None:
                 self._reset_graph(graph, context=f"unpublished key {key}")
             raise
+
+    @contextlib.contextmanager
+    def _cudnn_flags(self):
+        # note (luojiaxuan): only the benchmark switch moves; cudnn.flags()
+        # would also reset `enabled` and route every convolution to the
+        # im2col fallback.
+        if not self._cudnn_benchmark:
+            yield
+            return
+        previous = torch.backends.cudnn.benchmark
+        torch.backends.cudnn.benchmark = True
+        try:
+            yield
+        finally:
+            torch.backends.cudnn.benchmark = previous
 
     def _warmup_capture_shape(
         self,

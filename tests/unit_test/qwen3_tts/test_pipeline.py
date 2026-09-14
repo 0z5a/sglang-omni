@@ -7856,3 +7856,105 @@ def test_qwen3_tts_scheduler_adopts_prepared_tensors_after_the_preprocessing_eve
     assert waited == [ready]
     assert [stream for _, stream in recorded] == [scheduler_stream] * 4
     assert any(tensor is embeds for tensor, _ in recorded)
+
+
+def test_qwen3_tts_compile_sets_follow_the_explicit_knobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        qwen3_streaming_vocoder,
+        "Qwen3TTSIncrementalDecoder",
+        _FakeIncrementalQwen3TTSDecoder,
+    )
+    scheduler = Qwen3TTSStreamingVocoderScheduler(
+        _FakeQwen3TTSTokenizer(),
+        device="cpu",
+        async_decode=True,
+        enable_stateful_codec_decoder=True,
+        incremental_codec_compile=True,
+        incremental_codec_compile_fresh_frames=(8, 4, 2, 1, 4),
+        incremental_codec_compile_cold_fresh_frames=(2, 1),
+        incremental_codec_cudnn_benchmark=True,
+    )
+
+    assert scheduler._followup_incremental_graph_holders[
+        0
+    ]._compile_fresh_frames == frozenset({1, 2, 4, 8})
+    assert scheduler._initial_window_decode_graphs._compile_fresh_frames == (
+        frozenset({1, 2, 4, 8})
+    )
+    assert scheduler._initial_incremental_decode_graphs._compile_fresh_frames == (
+        frozenset({1, 2})
+    )
+    assert scheduler._initial_incremental_decode_graphs._cudnn_benchmark is True
+    assert scheduler._followup_incremental_graph_holders[0]._cudnn_benchmark is True
+
+    eager = Qwen3TTSStreamingVocoderScheduler(
+        _FakeQwen3TTSTokenizer(),
+        device="cpu",
+        async_decode=True,
+        enable_stateful_codec_decoder=True,
+        incremental_codec_compile=False,
+        incremental_codec_compile_fresh_frames=(1, 2, 4, 8),
+        incremental_codec_compile_cold_fresh_frames=(1, 2),
+    )
+
+    assert eager._followup_incremental_graph_holders[0]._compile_fresh_frames == (
+        frozenset()
+    )
+    assert eager._initial_incremental_decode_graphs._compile_fresh_frames == (
+        frozenset()
+    )
+    assert eager._initial_incremental_decode_graphs._cudnn_benchmark is False
+
+
+def test_qwen3_tts_compile_frames_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="compile_cold_fresh_frames must be > 0"):
+        Qwen3TTSStreamingVocoderScheduler(
+            _FakeQwen3TTSTokenizer(),
+            device="cpu",
+            incremental_codec_compile_cold_fresh_frames=(2, 0),
+        )
+
+
+def test_qwen3_tts_adaptive_initial_wait_keys_on_opened_streams() -> None:
+    scheduler = Qwen3TTSStreamingVocoderScheduler(
+        _FakeQwen3TTSTokenizer(),
+        device="cpu",
+        adaptive_initial_batch_wait=True,
+    )
+    dequeued = _Qwen3TTSStreamState()
+    dequeued.initial_pending = True
+    scheduler._stream_states["a"] = dequeued
+
+    assert scheduler._initial_siblings_pending() is False
+
+    opened = _Qwen3TTSStreamState()
+    scheduler._stream_states["b"] = opened
+
+    assert scheduler._initial_siblings_pending() is True
+
+    opened.decoded_chunks = 1
+
+    assert scheduler._initial_siblings_pending() is False
+
+
+def test_qwen3_tts_collect_async_batch_drains_the_queue_without_waiting() -> None:
+    scheduler = Qwen3TTSStreamingVocoderScheduler(
+        _FakeQwen3TTSTokenizer(),
+        device="cpu",
+    )
+    work: Queue = Queue()
+    work.put(("a", _Qwen3TTSStreamState()))
+    work.put(("b", _Qwen3TTSStreamState()))
+    started = time.monotonic()
+
+    batch = scheduler._collect_async_batch(
+        work,
+        max_batch_size=8,
+        batch_wait_s=0.5,
+        wait_for_more=lambda: False,
+    )
+
+    assert [request_id for request_id, _ in batch] == ["a", "b"]
+    assert time.monotonic() - started < 0.25

@@ -251,6 +251,7 @@ def create_vocoder_executor(
     stream_left_context_frames: int = DEFAULT_QWEN3_TTS_LEFT_CONTEXT_FRAMES,
     initial_max_batch_size: int = 32,
     initial_batch_wait_ms: int = 2,
+    adaptive_initial_batch_wait: bool = False,
     followup_max_batch_size: int = 8,
     followup_batch_wait_ms: int = 4,
     followup_worker_count: int = 2,
@@ -262,9 +263,12 @@ def create_vocoder_executor(
     codec_state_slots: int = DEFAULT_QWEN3_TTS_CODEC_STATE_SLOTS,
     incremental_codec_cuda_graph: bool | None = None,
     incremental_codec_compile: bool | None = None,
+    incremental_codec_compile_fresh_frames: Sequence[int] | None = None,
+    incremental_codec_compile_cold_fresh_frames: Sequence[int] | None = None,
     incremental_codec_cuda_graph_cold_frames: Sequence[int] | None = None,
     incremental_codec_cuda_graph_window_frames: Sequence[int] | None = None,
     incremental_codec_cuda_graph_min_free_gb: float = 3.0,
+    incremental_codec_cudnn_benchmark: bool = False,
     suppress_bootstrap_silence: bool = True,
     suppress_bootstrap_max_streams: int = 24,
 ) -> SimpleScheduler:
@@ -298,6 +302,7 @@ def create_vocoder_executor(
         max_batch_wait_ms=max_batch_wait_ms,
         initial_max_batch_size=initial_max_batch_size,
         initial_batch_wait_ms=initial_batch_wait_ms,
+        adaptive_initial_batch_wait=adaptive_initial_batch_wait,
         followup_max_batch_size=followup_max_batch_size,
         followup_batch_wait_ms=followup_batch_wait_ms,
         followup_worker_count=followup_worker_count,
@@ -309,6 +314,10 @@ def create_vocoder_executor(
         codec_state_slots=codec_state_slots,
         incremental_codec_cuda_graph=incremental_codec_cuda_graph,
         incremental_codec_compile=incremental_codec_compile,
+        incremental_codec_compile_fresh_frames=incremental_codec_compile_fresh_frames,
+        incremental_codec_compile_cold_fresh_frames=(
+            incremental_codec_compile_cold_fresh_frames
+        ),
         incremental_codec_cuda_graph_cold_frames=(
             incremental_codec_cuda_graph_cold_frames
         ),
@@ -318,6 +327,7 @@ def create_vocoder_executor(
         incremental_codec_cuda_graph_min_free_gb=(
             incremental_codec_cuda_graph_min_free_gb
         ),
+        incremental_codec_cudnn_benchmark=incremental_codec_cudnn_benchmark,
         suppress_bootstrap_silence=suppress_bootstrap_silence,
         suppress_bootstrap_max_streams=suppress_bootstrap_max_streams,
     )
