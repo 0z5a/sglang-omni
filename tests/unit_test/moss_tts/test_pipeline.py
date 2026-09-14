@@ -398,6 +398,7 @@ def test_moss_tts_engine_uses_text_backbone_context(
     builder.context_length = builder.resolve_context_length("model")
 
     assert builder.context_length == context_length
+    assert builder.generation_defaults(dtype="bfloat16")["disable_radix_cache"] is True
     assert (
         builder.generation_defaults(dtype="bfloat16")["max_prefill_tokens"]
         == expected_max_prefill_tokens

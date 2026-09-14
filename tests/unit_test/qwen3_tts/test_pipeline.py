@@ -544,6 +544,7 @@ def test_qwen3_tts_breakable_prefill_is_scoped_to_the_measured_checkpoint(
 
     # The admission-defaults path builds a bare builder with no checkpoint.
     bare = Qwen3TtsEngineBuilder().generation_defaults(dtype="bfloat16")
+    assert bare["disable_radix_cache"] is True
     assert "cuda_graph_backend_prefill" not in bare
     assert bare["max_running_requests"] == 16
 
