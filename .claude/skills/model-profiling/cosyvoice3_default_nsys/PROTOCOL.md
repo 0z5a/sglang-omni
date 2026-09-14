@@ -100,15 +100,9 @@ python .claude/skills/model-profiling/cosyvoice3_default_nsys/compute_sm_window.
   --bench-log <arm>/benches/headline200/bench.log
 ```
 
-脚本用 `TARGET_INFO_SESSION_START_TIME`（**不是** launch 墙钟，通常晚 15–25 s）把日志时间换成 session 相对 ns，再对 `GPU_METRICS` 做时间平均：
+脚本用 `TARGET_INFO_SESSION_START_TIME` 的 `localTime`（**不是** launch 墙钟，通常晚 15–25 s；日志的 asctime 是主机本地时钟，所以用同一个时钟）把日志时间换成 session 相对 ns，再对 `GPU_METRICS` 做时间平均。metricId 按名字前缀在 `TARGET_INFO_GPU_METRICS` 里查找（GR Active、SMs Active、SM Issue、Tensor Active），id 随 metric set 和驱动变，名字不变；每行输出附带 sample 数和 metricId。
 
-| metricId | 名字 |
-|---|---|
-| 3 | SMs Active |
-| 4 | SM Issue |
-| 5 | Tensor Active |
-
-采样 100 Hz，均值 = 窗内所有 sample 的算术平均（含 0）。H200 等价活跃 SM ≈ `SMs Active% / 100 × 132`。
+采样 100 Hz，均值 = 窗内所有 sample 的算术平均（含 0）。窗口包含 cohort 自己的 ramp 和 drain，所以引用一个数时要带上它的窗口。H200 等价活跃 SM ≈ `SMs Active% / 100 × 132`。
 
 更紧的 GPU 窗（首个正式 prefill → 最后 kernel）会再短 ~1–2 s，SM 大约低 0.1–0.3 pp；对比时两边用同一种切法。
 
