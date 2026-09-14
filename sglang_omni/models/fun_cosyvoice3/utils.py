@@ -54,8 +54,13 @@ class SpeechTokenizerV3:
         )
         option.intra_op_num_threads = max(1, int(intra_op_threads))
 
+        # note (db-ol): every unseen reference length is a new conv input shape, and
+        # the default exhaustive cuDNN search runs again for each one.
         providers = (
-            ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            [
+                ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "HEURISTIC"}),
+                "CPUExecutionProvider",
+            ]
             if device.startswith("cuda")
             else ["CPUExecutionProvider"]
         )
