@@ -37,7 +37,9 @@ AUDIO_PLACEHOLDER = "<audio>./</audio>"
 # Task prompts from the checkpoint's README ("Audio Understanding"); the
 # Chinese prompt also covers AST EN->ZH and the English one AST ZH->EN.
 ASR_PROMPT_ZH = "请仔细听这段音频片段，并将其内容逐字记录。"
-ASR_PROMPT_EN = "Please listen to the audio snippet carefully and transcribe the content."
+ASR_PROMPT_EN = (
+    "Please listen to the audio snippet carefully and transcribe the content."
+)
 
 
 def _resolve_local_model_dir(model_path: str) -> str:

@@ -46,7 +46,9 @@ def _reference_chunk_mask(size: int, chunk_size: int) -> torch.Tensor:
     return ret
 
 
-@pytest.mark.parametrize("size,chunk", [(1, 50), (49, 50), (50, 50), (301, 50), (300, 7)])
+@pytest.mark.parametrize(
+    "size,chunk", [(1, 50), (49, 50), (50, 50), (301, 50), (300, 7)]
+)
 def test_chunked_causal_mask_matches_reference_loop(size: int, chunk: int) -> None:
     got = _chunked_causal_mask(size, chunk, torch.device("cpu"))
     assert torch.equal(got, _reference_chunk_mask(size, chunk))
@@ -133,9 +135,10 @@ def test_golden_parity_vs_remote_code(lens: list[int]) -> None:
     chunk = 50
     seq_range = torch.arange(max_seq_len)
     valid = seq_range[None, :] < ((feat_lens - 1) // 2 + 1)[:, None]
-    allowed = _chunked_causal_mask(max_seq_len, chunk, torch.device("cpu"))[
-        None
-    ] & valid[:, None, :]
+    allowed = (
+        _chunked_causal_mask(max_seq_len, chunk, torch.device("cpu"))[None]
+        & valid[:, None, :]
+    )
 
     # Remote path: additive -inf mask, output_hidden_states, last hidden state.
     remote_mask = torch.zeros(batch, 1, max_seq_len, max_seq_len)

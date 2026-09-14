@@ -3,9 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from sglang_omni.models.minicpm_o.thinker_model_runner import (
-    MiniCPMOThinkerModelRunner,
-)
+from sglang_omni.models.minicpm_o.thinker_model_runner import MiniCPMOThinkerModelRunner
 from sglang_omni.scheduling.sglang_backend import SGLangOutputProcessor
 
 

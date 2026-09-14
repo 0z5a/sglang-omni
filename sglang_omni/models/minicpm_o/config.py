@@ -33,9 +33,7 @@ def _preprocessing_stage(*, process: str) -> StageConfig:
             "audio_encoder": (
                 f"{_PKG}.request_builders.project_preprocessing_to_audio_encoder"
             ),
-            "thinker": (
-                f"{_PKG}.request_builders.project_preprocessing_to_thinker"
-            ),
+            "thinker": (f"{_PKG}.request_builders.project_preprocessing_to_thinker"),
         },
     )
 

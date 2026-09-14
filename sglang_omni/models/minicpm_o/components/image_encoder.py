@@ -75,10 +75,7 @@ def _init_sglang_tp() -> None:
             s.bind(("", 0))
             os.environ["MASTER_PORT"] = str(s.getsockname()[1])
 
-    from sglang.srt.server_args import (
-        ServerArgs,
-        set_global_server_args_for_scheduler,
-    )
+    from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
 
     try:
         set_global_server_args_for_scheduler(ServerArgs(model_path="dummy"))
@@ -197,9 +194,7 @@ class MiniCPMOImageEncoder(nn.Module):
         packed sequence for the encoder, then scatter back to the padded
         ``(B, max_patches, D)`` shape the resampler consumes.
         """
-        from sglang.srt.layers.attention.vision import (
-            prepare_vision_attention_metadata,
-        )
+        from sglang.srt.layers.attention.vision import prepare_vision_attention_metadata
 
         embeds = self.vpm.embeddings(
             pixel_values=pixel_values,
