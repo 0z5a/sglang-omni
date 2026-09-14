@@ -1,5 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Streaming vocoder scheduler for Fun-CosyVoice3."""
+"""Fun-CosyVoice3 streaming vocoder.
+
+Note (chenyang):
+
+Flow is not autoregressive: it cannot emit one token of mel from one new
+token. Each causal step decodes the whole prefix plus several lookahead tokens
+(PRE_LOOKAHEAD_LEN). Those last several tokens are context only and are not played;
+the next step (or the stream-done flush) is when they become audio.
+"""
 
 from __future__ import annotations
 
@@ -49,23 +57,24 @@ class CosyVoice3StreamState:
     ready_since: float | None = None
     first_emit_at: float | None = None
 
-    def step_kind(self) -> Literal["hop", "final"] | None:
-        hop_window_end = self.token_offset + self.hop_len + PRE_LOOKAHEAD_LEN
-        if self.prompt_token is not None and len(self.tokens) >= hop_window_end:
-            return "hop"
+    def next_decode(self) -> Literal["causal_window", "leftover"] | None:
+        causal_token_end = self.token_offset + self.hop_len + PRE_LOOKAHEAD_LEN
+        if self.prompt_token is not None and len(self.tokens) >= causal_token_end:
+            return "causal_window"
         elif self.done:
-            return "final"
+            return "leftover"
         else:
             return None
 
 
 class FunCosyVoice3StreamingVocoderScheduler(
-    StreamingVocoderBase[CosyVoice3StreamState, Literal["hop", "final"]]
+    StreamingVocoderBase[CosyVoice3StreamState, Literal["causal_window", "leftover"]]
 ):
     """Decode CosyVoice3 speech tokens incrementally through Flow + HiFT."""
 
     _can_batch_stream_chunks = True
-    # note (chenyang): hops run from the serving loop after the inbox drains
+    # note (chenyang): causal Flow windows run from the serving loop after
+    # the inbox drains
     _pump_on_chunk_batch = False
 
     def __init__(
@@ -241,13 +250,13 @@ class FunCosyVoice3StreamingVocoderScheduler(
         return None
 
     def _mark_ready(self, state: CosyVoice3StreamState) -> None:
-        if state.ready_since is None and state.step_kind() is not None:
+        if state.ready_since is None and state.next_decode() is not None:
             state.ready_since = self._clock()
 
     def _has_ready_work(self) -> bool:
         with self._state_lock:
             for request_id, state in self._stream_state_items():
-                if state.step_kind() is not None and not self._is_aborted(request_id):
+                if state.next_decode() is not None and not self._is_aborted(request_id):
                     return True
             return False
 
@@ -257,7 +266,7 @@ class FunCosyVoice3StreamingVocoderScheduler(
         now = self._clock()
         ready: list[tuple[float, float, str, CosyVoice3StreamState]] = []
         for request_id, state in self._stream_state_items():
-            if state.step_kind() is None or self._is_aborted(request_id):
+            if state.next_decode() is None or self._is_aborted(request_id):
                 continue
             # note (ratish): a stream that has not emitted yet has nothing to
             # play, so it is as urgent as a stream whose buffer just ran out
@@ -274,32 +283,32 @@ class FunCosyVoice3StreamingVocoderScheduler(
             return []
         _, _, head_id, head = ready[0]
         # note (ratish): least playback slack first; same token window joins
-        # so equal-shape hops share one causal Flow call
-        if head.step_kind() == "final":
+        # so equal-shape causal Flow calls share one packed inference
+        if head.next_decode() == "leftover":
             return [(head_id, head)]
         else:
-            hop_window = (head.token_offset, head.hop_len)
+            token_window = (head.token_offset, head.hop_len)
             peers = [
                 (request_id, state)
                 for _, _, request_id, state in ready
-                if state.step_kind() == "hop"
-                and (state.token_offset, state.hop_len) == hop_window
+                if state.next_decode() == "causal_window"
+                and (state.token_offset, state.hop_len) == token_window
             ]
             return peers[: self._max_batch_size]
 
     def build_step_plan(
         self, participants: list[tuple[str, CosyVoice3StreamState]]
-    ) -> Literal["hop", "final"]:
-        kind = participants[0][1].step_kind()
-        assert kind is not None
-        return kind
+    ) -> Literal["causal_window", "leftover"]:
+        decode = participants[0][1].next_decode()
+        assert decode is not None
+        return decode
 
     def run_step(
         self,
         participants: list[tuple[str, CosyVoice3StreamState]],
-        plan: Literal["hop", "final"],
+        plan: Literal["causal_window", "leftover"],
     ) -> dict[str, torch.Tensor]:
-        if plan == "final":
+        if plan == "leftover":
             request_id, _ = participants[0]
             self._complete_stream_request(request_id, self._finish_stream(request_id))
             return {}
@@ -383,7 +392,7 @@ class FunCosyVoice3StreamingVocoderScheduler(
     ) -> torch.Tensor | None:
         del request_id
         if not is_final:
-            if state.step_kind() != "hop":
+            if state.next_decode() != "causal_window":
                 return None
             else:
                 delta = self._run_one_causal_hop(state)
@@ -392,7 +401,7 @@ class FunCosyVoice3StreamingVocoderScheduler(
                 else:
                     return None
         pieces: list[torch.Tensor] = []
-        while state.step_kind() == "hop":
+        while state.next_decode() == "causal_window":
             pieces.append(self._run_one_causal_hop(state))
         if state.tokens:
             # note (guozhihao-224): leftover keeps finalize=True so HiFT

@@ -31,6 +31,7 @@ from sglang_omni.models.fun_cosyvoice3.streaming import (
     tokens_needed_for_causal_chunk,
 )
 from sglang_omni.models.fun_cosyvoice3.streaming_vocoder import (
+    CosyVoice3StreamState,
     FunCosyVoice3StreamingVocoderScheduler,
 )
 from sglang_omni.pipeline.stage.stream_queue import StreamItem
@@ -841,3 +842,187 @@ def test_token_max_hop_len_caps_growth() -> None:
     assert [int(call["token"].shape[1]) for call in flow.calls] == [28, 78, 128]
     state = scheduler._stream_states["req-a"]
     assert state.hop_len == 50
+
+
+def _original_step_kind(state: CosyVoice3StreamState) -> str | None:
+    hop_window_end = state.token_offset + state.hop_len + PRE_LOOKAHEAD_LEN
+    if state.prompt_token is not None and len(state.tokens) >= hop_window_end:
+        return "first" if state.token_offset == 0 else "follow_up"
+    if state.done:
+        return "final"
+    return None
+
+
+def _original_select(
+    states: dict[str, CosyVoice3StreamState],
+    *,
+    now: float,
+    sample_rate: int,
+    max_batch_size: int,
+) -> tuple[list[str], str | None]:
+    # note (chenyang): verbatim #2169 selector; first vs follow_up only
+    # labels token_offset == 0, run_step branched solely on final
+    candidates: list[tuple[str, CosyVoice3StreamState, str]] = []
+    for request_id, state in states.items():
+        kind = _original_step_kind(state)
+        if kind is not None:
+            candidates.append((request_id, state, kind))
+    candidates.sort(
+        key=lambda item: (
+            0.0
+            if item[1].first_emit_at is None
+            else item[1].speech_offset / sample_rate - (now - item[1].first_emit_at),
+            item[1].ready_since,
+            item[0],
+        )
+    )
+    if not candidates:
+        return [], None
+    head_id, head, head_kind = candidates[0]
+    if head_kind == "final":
+        return [head_id], "final"
+    hop_window = (head.token_offset, head.hop_len)
+    peers = [
+        request_id
+        for request_id, state, kind in candidates
+        if kind != "final" and (state.token_offset, state.hop_len) == hop_window
+    ]
+    return peers[:max_batch_size], head_kind
+
+
+def _prompted_state(**kwargs) -> CosyVoice3StreamState:
+    state = CosyVoice3StreamState(
+        prompt_token=torch.zeros(1, TOKEN_HOP_LEN, dtype=torch.int32),
+        prompt_feat=torch.zeros(1, TOKEN_HOP_LEN * TOKEN_MEL_RATIO, 80),
+        embedding=torch.ones(1, 192),
+        **kwargs,
+    )
+    return state
+
+
+def test_hop_final_select_matches_original_first_follow_up_final() -> None:
+    clock = _Clock(now=1000.0)
+    _, scheduler = _scheduler(max_batch_size=2)
+    scheduler._clock = clock
+    hop = TOKEN_HOP_LEN
+    lookahead = PRE_LOOKAHEAD_LEN
+    cases = [
+        {
+            "a": _prompted_state(
+                tokens=list(range(hop + lookahead)),
+                ready_since=10.0,
+            ),
+            "b": _prompted_state(
+                tokens=list(range(hop + lookahead)),
+                ready_since=11.0,
+            ),
+        },
+        {
+            "first": _prompted_state(
+                tokens=list(range(hop + lookahead)),
+                ready_since=5.0,
+            ),
+            "follow": _prompted_state(
+                tokens=list(range(hop + next_stream_hop_len(hop) + lookahead)),
+                token_offset=hop,
+                hop_len=next_stream_hop_len(hop),
+                ready_since=1.0,
+                first_emit_at=999.0,
+                speech_offset=48000,
+            ),
+        },
+        {
+            "fa": _prompted_state(
+                tokens=list(range(hop + next_stream_hop_len(hop) + lookahead)),
+                token_offset=hop,
+                hop_len=next_stream_hop_len(hop),
+                ready_since=2.0,
+                first_emit_at=990.0,
+                speech_offset=12000,
+            ),
+            "fb": _prompted_state(
+                tokens=list(range(hop + next_stream_hop_len(hop) + lookahead)),
+                token_offset=hop,
+                hop_len=next_stream_hop_len(hop),
+                ready_since=3.0,
+                first_emit_at=990.0,
+                speech_offset=12000,
+            ),
+            "fc": _prompted_state(
+                tokens=list(range(hop + next_stream_hop_len(hop) + lookahead)),
+                token_offset=hop,
+                hop_len=next_stream_hop_len(hop),
+                ready_since=4.0,
+                first_emit_at=990.0,
+                speech_offset=12000,
+            ),
+        },
+        {
+            "starve": _prompted_state(
+                tokens=list(range(hop + next_stream_hop_len(hop) + lookahead)),
+                token_offset=hop,
+                hop_len=next_stream_hop_len(hop),
+                ready_since=1.0,
+                first_emit_at=900.0,
+                speech_offset=2400,
+            ),
+            "new": _prompted_state(
+                tokens=list(range(hop + lookahead)),
+                ready_since=2.0,
+            ),
+            "done": _prompted_state(
+                tokens=list(range(10)),
+                done=True,
+                ready_since=0.0,
+                first_emit_at=980.0,
+                speech_offset=24000,
+            ),
+        },
+        {
+            "final-a": _prompted_state(
+                tokens=list(range(10)),
+                done=True,
+                ready_since=8.0,
+                first_emit_at=990.0,
+                speech_offset=1000,
+            ),
+            "final-b": _prompted_state(
+                tokens=list(range(10)),
+                done=True,
+                ready_since=9.0,
+                first_emit_at=990.0,
+                speech_offset=1000,
+            ),
+        },
+        {
+            "done-but-hop": _prompted_state(
+                tokens=list(range(hop + lookahead)),
+                done=True,
+                ready_since=1.0,
+            ),
+            "plain-final": CosyVoice3StreamState(
+                tokens=[],
+                done=True,
+                ready_since=0.0,
+            ),
+        },
+    ]
+    for states in cases:
+        scheduler._stream_states = dict(states)
+        expected_ids, expected_kind = _original_select(
+            states,
+            now=clock.now,
+            sample_rate=scheduler._sample_rate,
+            max_batch_size=scheduler._max_batch_size,
+        )
+        participants = scheduler.select_step_participants()
+        got_ids = [request_id for request_id, _ in participants]
+        assert got_ids == expected_ids
+        if not expected_ids:
+            continue
+        plan = scheduler.build_step_plan(participants)
+        if expected_kind == "final":
+            assert plan == "leftover"
+        else:
+            assert expected_kind in ("first", "follow_up")
+            assert plan == "causal_window"
