@@ -98,9 +98,7 @@ def test_cosyvoice3_prompt_mel_uses_flow_layout_and_fixed_configuration(
     assert torch.equal(result[0, 0], torch.arange(0, 80 * 3, 3, dtype=torch.float32))
 
 
-def test_cosyvoice3_speech_tokenizer_uses_heuristic_cudnn_search_on_cuda(
-    monkeypatch,
-) -> None:
+def test_cosyvoice3_reference_encoders_pin_onnx_providers(monkeypatch) -> None:
     captured: list[object] = []
 
     def fake_session(model_path, sess_options, providers):
@@ -115,11 +113,13 @@ def test_cosyvoice3_speech_tokenizer_uses_heuristic_cudnn_search_on_cuda(
 
     utils.SpeechTokenizerV3("speech_tokenizer_v3.onnx", device="cuda:0")
     utils.SpeechTokenizerV3("speech_tokenizer_v3.onnx", device="cpu")
+    utils.SpeakerEncoder("campplus.onnx", device="cuda:0")
 
     assert captured == [
         [
             ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "HEURISTIC"}),
             "CPUExecutionProvider",
         ],
+        ["CPUExecutionProvider"],
         ["CPUExecutionProvider"],
     ]
