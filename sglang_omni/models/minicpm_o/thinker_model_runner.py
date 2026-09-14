@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sglang_omni.model_runner.base import ModelRunner
 from sglang_omni.model_runner.thinker_model_runner import ThinkerModelRunner
 
 
@@ -30,7 +31,7 @@ class MiniCPMOThinkerModelRunner(ThinkerModelRunner):
 
         # Skip ThinkerModelRunner.__init__ (it requires hf_config.thinker_config)
         # but keep its grandparent initialization.
-        super(ThinkerModelRunner, self).__init__(tp_worker, output_processor)
+        ModelRunner.__init__(self, tp_worker, output_processor)
 
         model = self.model
         self._outer_model = model.thinker
