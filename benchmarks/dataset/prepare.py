@@ -105,7 +105,6 @@ def download_dataset(
             repo_type="dataset",
             **revision_kwargs,
         )
-    elif dataset_id == "lmms-lab/mmau" and separator:
     elif dataset_id == "openslr/librispeech_asr" and separator:
         # Restrict to the test parquet files; loading the config downloads
         # the train splits too (tens of GB).
