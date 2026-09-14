@@ -21,13 +21,16 @@ class MiniCPMOThinkerModelRunner(ThinkerModelRunner):
     unused; the ids are set to -1 (matching no token).
 
     Hidden capture follows the deployment, not individual request modalities.
-    Speech and explicit hidden-return configurations use FULL, matching their
-    captured graphs; text-only deployments default to NULL. FULL is also needed
-    for optional prefill graphs, which require an exact hidden-mode match.
+    Speech uses FULL; text-only deployments follow SGLang's configured hidden
+    return mode, defaulting to NULL. The requested mode must be covered by the
+    deployment's captured graphs.
     """
 
     def __init__(self, tp_worker: Any, output_processor: Any):
-        from sglang.srt.model_executor.forward_batch_info import CaptureHiddenMode
+        from sglang.srt.model_executor.forward_batch_info import (
+            CaptureHiddenMode,
+            get_server_return_hidden_states_mode,
+        )
 
         # Skip ThinkerModelRunner.__init__ (it requires hf_config.thinker_config)
         # but keep its grandparent initialization.
@@ -47,12 +50,7 @@ class MiniCPMOThinkerModelRunner(ThinkerModelRunner):
         self._capture_hidden_mode = (
             CaptureHiddenMode.FULL
             if output_processor._capture_hidden
-            or getattr(
-                tp_worker.model_runner.server_args,
-                "enable_return_hidden_states",
-                False,
-            )
-            else CaptureHiddenMode.NULL
+            else get_server_return_hidden_states_mode()
         )
 
         # Per-request GPU-side hidden-state accumulators; flushed to CPU once

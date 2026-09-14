@@ -1,3 +1,4 @@
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -36,8 +37,6 @@ def test_bootstrap_wires_abort_cleanup(monkeypatch, speech_enabled):
             None,
             None,
             None,
-            None,
-            None,
             SimpleNamespace(model_path="model", vocab_size=100),
         ),
     )
@@ -50,7 +49,10 @@ def test_bootstrap_wires_abort_cleanup(monkeypatch, speech_enabled):
         lambda **kwargs: (None, None),
     )
 
+    scheduler_signature = inspect.signature(OmniScheduler.__init__)
+
     def init_scheduler(scheduler, **kwargs):
+        scheduler_signature.bind(scheduler, **kwargs)
         scheduler._abort_callback = kwargs.get("abort_callback")
 
     monkeypatch.setattr(OmniScheduler, "__init__", init_scheduler)

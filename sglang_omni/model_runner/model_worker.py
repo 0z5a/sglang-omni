@@ -168,6 +168,7 @@ class ModelWorker:
             model_config.num_attention_heads = int(cfg["num_attention_heads"])
             model_config.num_key_value_heads = int(cfg["num_key_value_heads"])
             model_config.num_hidden_layers = int(cfg["num_hidden_layers"])
+            model_config.num_attention_layers = model_config.num_hidden_layers
             model_config.head_dim = (
                 model_config.hidden_size // model_config.num_attention_heads
             )

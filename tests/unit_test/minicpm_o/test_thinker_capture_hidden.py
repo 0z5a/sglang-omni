@@ -11,38 +11,42 @@ from sglang_omni.scheduling.sglang_backend import SGLangOutputProcessor
 
 @pytest.mark.parametrize("speech_enabled", [False, True])
 @pytest.mark.parametrize("return_hidden_states", [False, True])
+@pytest.mark.parametrize("return_hidden_states_mode", [None, "last", "full"])
 @pytest.mark.parametrize("phase", ["prefill", "decode"])
 @pytest.mark.parametrize(
     "modalities", [[["text"]], [["text", "audio"]], [["text"], ["text", "audio"]]]
 )
 def test_capture_hidden_mode_matches_deployment(
-    speech_enabled, return_hidden_states, phase, modalities
+    speech_enabled, return_hidden_states, return_hidden_states_mode, phase, modalities
 ):
     from sglang.srt.model_executor.forward_batch_info import CaptureHiddenMode
+    from sglang.srt.runtime_context import get_context
 
     model = SimpleNamespace(
         thinker=SimpleNamespace(model=SimpleNamespace(embed_tokens=object()))
     )
     worker = SimpleNamespace(
         gpu_id=0,
-        model_runner=SimpleNamespace(
-            model=model,
-            server_args=SimpleNamespace(
-                enable_return_hidden_states=return_hidden_states
-            ),
-        ),
+        model_runner=SimpleNamespace(model=model),
     )
     should_emit_hidden = Mock(side_effect=AssertionError("must not gate per request"))
     output_processor = SGLangOutputProcessor(
         capture_hidden=speech_enabled, should_emit_hidden=should_emit_hidden
     )
-    runner = MiniCPMOThinkerModelRunner(worker, output_processor)
+    with get_context().override_server_args(
+        enable_return_hidden_states=return_hidden_states,
+        return_hidden_states_mode=return_hidden_states_mode,
+    ):
+        runner = MiniCPMOThinkerModelRunner(worker, output_processor)
     requests = [SimpleNamespace(modalities=values) for values in modalities]
-    expected = (
-        CaptureHiddenMode.FULL
-        if speech_enabled or return_hidden_states
-        else CaptureHiddenMode.NULL
-    )
+    if speech_enabled:
+        expected = CaptureHiddenMode.FULL
+    elif return_hidden_states_mode == "last":
+        expected = CaptureHiddenMode.LAST
+    elif return_hidden_states or return_hidden_states_mode == "full":
+        expected = CaptureHiddenMode.FULL
+    else:
+        expected = CaptureHiddenMode.NULL
 
     requested_mode = getattr(runner, f"requested_capture_hidden_mode_{phase}")
 

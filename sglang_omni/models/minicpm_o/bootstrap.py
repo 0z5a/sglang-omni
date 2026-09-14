@@ -23,6 +23,7 @@ def create_talker_scheduler(
     prompts are per-request embeddings, and chunked prefill is off because the
     condition must land in one prefill pass.
     """
+    from sglang.srt.arg_groups.model_override_base import resolved_view
     from sglang.srt.utils.hf_transformers_utils import get_tokenizer
 
     from sglang_omni.models.minicpm_o.request_builders import (
@@ -39,7 +40,7 @@ def create_talker_scheduler(
     from sglang_omni.scheduling.sglang_backend import SGLangOutputProcessor
     from sglang_omni.vendor.sglang.server_args import override_server_args
 
-    want_cuda_graph = not bool(server_args.disable_cuda_graph)
+    want_cuda_graph = not bool(resolved_view(server_args).disable_cuda_graph)
     override_server_args(
         server_args,
         "sglang_omni.minicpm_o.talker",
@@ -52,8 +53,6 @@ def create_talker_scheduler(
         tree_cache,
         req_to_token_pool,
         token_to_kv_pool_allocator,
-        prefill_mgr,
-        decode_mgr,
         model_config,
     ) = create_sglang_infrastructure(
         server_args,
@@ -75,11 +74,6 @@ def create_talker_scheduler(
     model_config.vocab_size = codec_vocab_size
     model._sampler = model_worker.model_runner.sampler
     if want_cuda_graph:
-        override_server_args(
-            server_args,
-            "sglang_omni.minicpm_o.talker_restore_cuda_graph_capture",
-            disable_cuda_graph=False,
-        )
         init_sglang_cuda_graphs(model_worker)
 
     output_proc = SGLangOutputProcessor(
@@ -105,8 +99,6 @@ def create_talker_scheduler(
         token_to_kv_pool_allocator=token_to_kv_pool_allocator,
         server_args=server_args,
         model_config=model_config,
-        prefill_manager=prefill_mgr,
-        decode_manager=decode_mgr,
         model_runner=model_runner,
         request_builder=request_builder,
         result_adapter=result_adapter,
@@ -131,6 +123,7 @@ def create_thinker_scheduler(
     processor selects each request's last row. The talker consumes them as
     the TTS condition alongside the generated token ids.
     """
+    from sglang.srt.arg_groups.model_override_base import resolved_view
     from sglang.srt.utils.hf_transformers_utils import get_tokenizer
 
     from sglang_omni.models.minicpm_o.request_builders import (
@@ -149,19 +142,17 @@ def create_thinker_scheduler(
     from sglang_omni.scheduling.sglang_backend import SGLangOutputProcessor
     from sglang_omni.vendor.sglang.server_args import override_server_args
 
-    # Hidden-state capture requires return_hidden_states in the runner; defer
-    # cuda-graph capture past infrastructure creation so graphs are built with
-    # the hidden-capture configuration (mirrors qwen3_omni bootstrap).
-    want_cuda_graph = not bool(server_args.disable_cuda_graph)
+    cfg = resolved_view(server_args)
+    want_cuda_graph = not bool(cfg.disable_cuda_graph)
     defer_cuda_graph_capture = want_cuda_graph and speech_enabled
     if defer_cuda_graph_capture:
-        saved_disable_cuda_graph = server_args.disable_cuda_graph
-        saved_return_hidden_states = server_args.enable_return_hidden_states
+        saved_return_hidden_states = cfg.enable_return_hidden_states
+        saved_return_hidden_states_mode = cfg.return_hidden_states_mode
         override_server_args(
             server_args,
             "sglang_omni.minicpm_o.defer_cuda_graph_capture",
             enable_return_hidden_states=True,
-            disable_cuda_graph=True,
+            return_hidden_states_mode="full",
         )
 
     try:
@@ -174,12 +165,15 @@ def create_thinker_scheduler(
             total_gpu_memory_fraction=total_gpu_memory_fraction,
             defer_cuda_graph_capture=defer_cuda_graph_capture,
         )
+        if defer_cuda_graph_capture:
+            init_sglang_cuda_graphs(infrastructure[0])
     finally:
         if defer_cuda_graph_capture:
             override_server_args(
                 server_args,
-                "sglang_omni.minicpm_o.restore_cuda_graph_capture",
-                disable_cuda_graph=saved_disable_cuda_graph,
+                "sglang_omni.minicpm_o.restore_return_hidden_states",
+                enable_return_hidden_states=saved_return_hidden_states,
+                return_hidden_states_mode=saved_return_hidden_states_mode,
             )
 
     (
@@ -187,19 +181,8 @@ def create_thinker_scheduler(
         tree_cache,
         req_to_token_pool,
         token_to_kv_pool_allocator,
-        prefill_mgr,
-        decode_mgr,
         model_config,
     ) = infrastructure
-
-    if defer_cuda_graph_capture:
-        # Graphs must capture with return_hidden_states still on.
-        init_sglang_cuda_graphs(model_worker)
-        override_server_args(
-            server_args,
-            "sglang_omni.minicpm_o.restore_return_hidden_states",
-            enable_return_hidden_states=saved_return_hidden_states,
-        )
 
     def _should_emit_hidden(request: Any) -> bool:
         return should_generate_audio_output(request.data.stage_payload)
@@ -225,8 +208,6 @@ def create_thinker_scheduler(
         token_to_kv_pool_allocator=token_to_kv_pool_allocator,
         server_args=server_args,
         model_config=model_config,
-        prefill_manager=prefill_mgr,
-        decode_manager=decode_mgr,
         model_runner=model_runner,
         request_builder=request_builder,
         result_adapter=result_adapter,

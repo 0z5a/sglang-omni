@@ -136,6 +136,8 @@ def create_sglang_talker_executor_from_config(
     total_gpu_memory_fraction: float | None = None,
 ):
     """Returns OmniScheduler for the native sglang MiniCPM-o talker."""
+    from sglang.srt.arg_groups.model_override_base import resolved_view
+
     from sglang_omni.models.minicpm_o.bootstrap import create_talker_scheduler
     from sglang_omni.scheduling.generation_batch_policy import (
         build_generation_batch_overrides,
@@ -169,7 +171,7 @@ def create_sglang_talker_executor_from_config(
         f"sglang_ar_startup stage=talker gpu_id={gpu_id} tp_rank={tp_rank}/{tp_size} "
         f"context_length={max_seq_len} "
         f"total_gpu_memory_fraction={total_gpu_memory_fraction} "
-        f"mem_fraction_static={server_args.mem_fraction_static} "
+        f"mem_fraction_static={resolved_view(server_args).mem_fraction_static} "
         f"pre_load_avail_mem={avail_gpu_mem(gpu_id)} "
         f"pid={os.getpid()}"
     )
@@ -257,6 +259,8 @@ def create_sglang_thinker_executor_from_config(
     speech_enabled: bool = False,
 ):
     """Returns OmniScheduler for the MiniCPM-o thinker."""
+    from sglang.srt.arg_groups.model_override_base import resolved_view
+
     from sglang_omni.models.minicpm_o.bootstrap import create_thinker_scheduler
     from sglang_omni.scheduling.generation_batch_policy import (
         build_generation_batch_overrides,
@@ -288,7 +292,7 @@ def create_sglang_thinker_executor_from_config(
         f"sglang_ar_startup stage=thinker gpu_id={gpu_id} tp_rank={tp_rank}/{tp_size} "
         f"context_length={max_seq_len} "
         f"total_gpu_memory_fraction={total_gpu_memory_fraction} "
-        f"mem_fraction_static={server_args.mem_fraction_static} "
+        f"mem_fraction_static={resolved_view(server_args).mem_fraction_static} "
         f"pre_load_avail_mem={avail_gpu_mem(gpu_id)} "
         f"pid={os.getpid()}"
     )
