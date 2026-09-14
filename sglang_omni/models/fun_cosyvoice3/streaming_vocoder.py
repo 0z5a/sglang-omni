@@ -57,14 +57,14 @@ class CosyVoice3StreamState:
     ready_since: float | None = None
     first_emit_at: float | None = None
 
-    def next_decode(self) -> Literal["causal_window", "leftover"] | None:
+    def next_decode(self) -> Literal["causal_window", "leftover", "wait"]:
         causal_token_end = self.token_offset + self.hop_len + PRE_LOOKAHEAD_LEN
         if self.prompt_token is not None and len(self.tokens) >= causal_token_end:
             return "causal_window"
         elif self.done:
             return "leftover"
         else:
-            return None
+            return "wait"
 
 
 class FunCosyVoice3StreamingVocoderScheduler(
@@ -250,13 +250,13 @@ class FunCosyVoice3StreamingVocoderScheduler(
         return None
 
     def _mark_ready(self, state: CosyVoice3StreamState) -> None:
-        if state.ready_since is None and state.next_decode() is not None:
+        if state.ready_since is None and state.next_decode() != "wait":
             state.ready_since = self._clock()
 
     def _has_ready_work(self) -> bool:
         with self._state_lock:
             for request_id, state in self._stream_state_items():
-                if state.next_decode() is not None and not self._is_aborted(request_id):
+                if state.next_decode() != "wait" and not self._is_aborted(request_id):
                     return True
             return False
 
@@ -266,7 +266,7 @@ class FunCosyVoice3StreamingVocoderScheduler(
         now = self._clock()
         ready: list[tuple[float, float, str, CosyVoice3StreamState]] = []
         for request_id, state in self._stream_state_items():
-            if state.next_decode() is None or self._is_aborted(request_id):
+            if state.next_decode() == "wait" or self._is_aborted(request_id):
                 continue
             # note (ratish): a stream that has not emitted yet has nothing to
             # play, so it is as urgent as a stream whose buffer just ran out
@@ -300,7 +300,7 @@ class FunCosyVoice3StreamingVocoderScheduler(
         self, participants: list[tuple[str, CosyVoice3StreamState]]
     ) -> Literal["causal_window", "leftover"]:
         decode = participants[0][1].next_decode()
-        assert decode is not None
+        assert decode != "wait"
         return decode
 
     def run_step(
