@@ -934,3 +934,13 @@ gate、具名音色必须带 voice 而克隆臂必须不带、workflow 的 rotat
 (容器数 0 == map 条目数 0);`actions-runner-h100` 的 `omni-autoscaler.yaml`
 `max_runners` 维持 3,我的备份文件比对一致后已删,四个 runner 安装回到我动手前的状态
 (h100=3,-2/-3/-4=4)。
+
+## 第十八轮:torch profiler + nsys 剖面,回答"还有没有余量"(2026-09-14 PT)
+
+完整报告在 [qwen3_tts_profiler_headroom_20260914.md](qwen3_tts_profiler_headroom_20260914.md)。这里只记结论与对本文档旧结论的更正。
+
+**判决**:两个速率下 GPU 都不是"又忙又发射满"。r1 请求内部忙时 SM Issue 5.4%(93% 的忙时低于 10%),中位 kernel 1.95 us,91% 的 kernel 时间落在填不满 132 个 SM 的 grid 上;r20 kernel 忙 61.6%,空闲全是 100 us 到 10 ms 的洞,talker 流每 12.9 ms 步空 4.55 ms 等 CPU。Tensor Active 任何阶段不超过 4.2%,DRAM read 最高 40.8%(bs=1 talker 图)。余量有两种:调度/CPU 空洞(大头由在途 #2123 覆盖,剩下的是准入白等一整个 decode 步)与低发射 kernel(predictor 982 kernel/帧、vocoder 60% 的重放是 eager-in-graph、B4/B8 图的 CUDA-core conv)。
+
+**对旧结论的更正**:第 7 轮"cohort 间降频、重放前爬频"的猜想不成立,GPC 时钟稳定在 1.98 GHz(p1 1,878 MHz)。第 12 轮外审说"predictor GEMM 2.1 ms 已是地板"没有量 grid:27 个 GEMM 每子步只用 16-96 个 CTA,权重 2.65 GB/帧按 3.35 TB/s 只需 0.79 ms,实测 2.10 ms 即 38% 峰值。第 7 轮 COLD 编译臂作废是单 seed、在 arena 入图与流解耦之前,3 seed 复测后再定。
+
+**排好序的候选**(收益都是算术推演):C1 准入同轮进队(r1 -3.4 ms 均值,r20 -8 到 -14 ms);C2 vocoder 编译 COLD 与 ramp 宽度(r1 -1.5 到 -1.9);C3 自适应 initial_batch_wait(r1 -2.0);C4 predictor 小 M GEMM 全 SM 化(r1 -1.0 到 -1.7,r20 约 -3);C5 predictor glue 融合 + 短上下文 attention;C6 seeded 采样 kernel;C7 双 token prologue 合并;C8 arena 扁平化;C9 修 B4/B8 图的 cudnn 算法(只动产能,r20 vocoder GPU -10 到 -12%)。被否的 8 条(含异步 decode 循环、talker GEMV 带宽、batched emit)与理由见报告第 4 节。下一步 E1(C1 A/B)、E2(C2+C9+C3)、E3(C4 离线微基准)见报告第 5 节。
