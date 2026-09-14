@@ -287,6 +287,19 @@ class MiniCPMOImageEncoder(nn.Module):
                 all_pixel_values, patch_attn_mask, tgt_sizes, patch_counts_cpu
             )
 
-        # (B, query_num, hidden) → flat placeholder rows in slice order.
-        vision_embedding = self.resampler(vision_embedding, tgt_sizes)
+        # Keep the resampler chunked as well. Its attention workspace scales
+        # with the number of slices, so video frames can otherwise exhaust GPU
+        # memory even though the vision tower itself is chunked above.
+        if B > chunk:
+            resampled = []
+            for start in range(0, B, chunk):
+                end = start + chunk
+                resampled.append(
+                    self.resampler(vision_embedding[start:end], tgt_sizes[start:end])
+                )
+            vision_embedding = torch.cat(resampled, dim=0)
+        else:
+            vision_embedding = self.resampler(vision_embedding, tgt_sizes)
+
+        # (B, query_num, hidden) -> flat placeholder rows in slice order.
         return {"image_embeds": vision_embedding.flatten(0, 1)}

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from PIL import Image
 from transformers import AutoProcessor, AutoTokenizer
 
 from sglang_omni.models.minicpm_o.payload_types import MiniCPMOPipelineState
@@ -55,6 +56,46 @@ def _first_batch_item(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
         return value[0]
     return value
+
+
+def _video_to_images(video: Any) -> list[Image.Image]:
+    """Convert one decoded video ``(T, C, H, W)`` tensor to RGB frames."""
+    if isinstance(video, list) and all(isinstance(frame, Image.Image) for frame in video):
+        return [frame.convert("RGB") for frame in video]
+
+    frames = video if isinstance(video, torch.Tensor) else torch.as_tensor(video)
+    if frames.ndim != 4:
+        raise ValueError(
+            "MiniCPM-o video inputs must have shape (T, C, H, W), "
+            f"got {tuple(frames.shape)}"
+        )
+    if frames.shape[1] in (1, 3, 4):
+        frames = frames.permute(0, 2, 3, 1)
+    elif frames.shape[-1] not in (1, 3, 4):
+        raise ValueError(
+            "MiniCPM-o video frames must have 1, 3, or 4 channels, "
+            f"got {tuple(frames.shape)}"
+        )
+
+    frames = frames.detach().cpu()
+    if frames.is_floating_point() and frames.numel() and float(frames.max()) <= 1.0:
+        frames = frames * 255.0
+    frames = frames.clamp(0, 255).to(torch.uint8)
+    return [Image.fromarray(frame.numpy()).convert("RGB") for frame in frames]
+
+
+def compute_video_cache_key(*args: Any, **kwargs: Any) -> str | None:
+    from sglang_omni.preprocessing.video import compute_video_cache_key as _compute
+
+    return _compute(*args, **kwargs)
+
+
+async def ensure_video_list_async(
+    *args: Any, **kwargs: Any
+) -> tuple[list[Any], Any, Any]:
+    from sglang_omni.preprocessing.video import ensure_video_list_async as _ensure
+
+    return await _ensure(*args, **kwargs)
 
 
 class MiniCPMOPreprocessor:
@@ -109,6 +150,8 @@ class MiniCPMOPreprocessor:
         inputs = payload.request.inputs
         raw_images = None
         raw_audios = None
+        raw_videos = None
+        video_params: dict[str, Any] = {}
         if isinstance(inputs, dict) and inputs.get("audio_bytes") is not None:
             # /v1/audio/transcriptions upload: build the README ASR chat turn.
             messages, raw_audios = self._speech_to_text_inputs(payload, inputs)
@@ -116,12 +159,29 @@ class MiniCPMOPreprocessor:
             messages = inputs.get("messages", [])
             raw_images = inputs.get("images")
             raw_audios = inputs.get("audio") or inputs.get("audios")
+            raw_videos = inputs.get("videos") or inputs.get("video")
+            video_params = {
+                key: inputs.get(key)
+                for key in (
+                    "video_fps",
+                    "video_max_frames",
+                    "video_min_pixels",
+                    "video_max_pixels",
+                    "video_total_pixels",
+                )
+                if inputs.get(key) is not None
+            }
         else:
             messages = inputs
 
-        if raw_images or raw_audios:
+        if raw_images or raw_audios or raw_videos:
             return await self._preprocess_multimodal(
-                payload, messages, raw_images=raw_images, raw_audios=raw_audios
+                payload,
+                messages,
+                raw_images=raw_images,
+                raw_audios=raw_audios,
+                raw_videos=raw_videos,
+                video_params=video_params,
             )
 
         if (
@@ -198,12 +258,38 @@ class MiniCPMOPreprocessor:
         *,
         raw_images: Any,
         raw_audios: Any,
+        raw_videos: Any,
+        video_params: dict[str, Any],
     ) -> StagePayload:
+        video_kwargs = {
+            key.removeprefix("video_"): value for key, value in video_params.items()
+        }
         image_cache_key = compute_image_cache_key(raw_images)
-        audio_cache_key = compute_audio_cache_key(raw_audios)
+        video_cache_key = (
+            compute_video_cache_key(raw_videos, **video_kwargs)
+            if raw_videos
+            else None
+        )
 
         images = await ensure_image_list_async(raw_images)
+        if raw_videos:
+            videos, _, video_audios = await ensure_video_list_async(
+                raw_videos,
+                **video_kwargs,
+                extract_audio=True,
+                audio_target_sr=16000,
+            )
+        else:
+            videos, video_audios = [], None
+        video_images = [frame for video in videos for frame in _video_to_images(video)]
+        images.extend(video_images)
         audios = await ensure_audio_list_async(raw_audios, target_sr=16000)
+        if video_audios:
+            audios.extend(audio for audio in video_audios if audio is not None)
+        audio_cache_key = compute_audio_cache_key(audios)
+
+        cache_keys = [key for key in (image_cache_key, video_cache_key) if key]
+        image_cache_key = "|".join(cache_keys) if cache_keys else None
 
         if isinstance(messages, list) and not (
             messages and all(isinstance(token, int) for token in messages)
@@ -268,6 +354,17 @@ class MiniCPMOPreprocessor:
         )
         payload.data = state.to_dict()
         payload.request.inputs = None
-        for key in ("audios", "images", "videos"):
+        for key in (
+            "audios",
+            "audio",
+            "images",
+            "videos",
+            "video",
+            "video_fps",
+            "video_max_frames",
+            "video_min_pixels",
+            "video_max_pixels",
+            "video_total_pixels",
+        ):
             payload.request.metadata.pop(key, None)
         return payload
