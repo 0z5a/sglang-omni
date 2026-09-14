@@ -219,12 +219,33 @@ class MiniCPMOPreprocessor:
     ) -> str:
         if isinstance(messages, str):
             return messages
+        messages = self._normalize_message_contents(messages)
         return self.tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
             tokenize=False,
             use_tts_template=use_tts_template,
         )
+
+    @staticmethod
+    def _normalize_message_contents(messages: Any) -> Any:
+        """Convert OpenAI text-part content to the string form expected by MiniCPM."""
+        if not isinstance(messages, list):
+            return messages
+        normalized = []
+        for message in messages:
+            if not isinstance(message, dict):
+                normalized.append(message)
+                continue
+            content = message.get("content", "")
+            if isinstance(content, list):
+                content = "".join(
+                    str(part.get("text", ""))
+                    for part in content
+                    if isinstance(part, dict) and part.get("type") == "text"
+                )
+            normalized.append({**message, "content": content})
+        return normalized
 
     def _messages_with_media_placeholders(
         self,
@@ -239,6 +260,7 @@ class MiniCPMOPreprocessor:
         are joined with newlines, placeholders first.
         """
         result: list[dict[str, Any]] = []
+        messages = self._normalize_message_contents(messages)
         for i, msg in enumerate(messages):
             if i == len(messages) - 1 and msg.get("role", "user") == "user":
                 parts = (

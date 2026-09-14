@@ -96,3 +96,14 @@ def test_penalty_noop_rows_bitwise_unchanged() -> None:
     # The untouched row must be bitwise identical (never round-tripped).
     assert torch.equal(logits_output.next_token_logits[1], original[1])
     assert not torch.equal(logits_output.next_token_logits[0], original[0])
+
+
+def test_sampling_logits_hook_applies_penalty() -> None:
+    request = _make_request([3, 3], 2.0)
+    logits = torch.ones(1, 8)
+    logits_output = SimpleNamespace(next_token_logits=logits)
+    runner = MiniCPMOTalkerModelRunner.__new__(MiniCPMOTalkerModelRunner)
+
+    runner._process_sampling_logits(logits_output, [request])
+
+    assert logits_output.next_token_logits[0, 3].item() == 0.25

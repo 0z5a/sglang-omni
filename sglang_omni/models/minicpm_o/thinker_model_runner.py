@@ -97,9 +97,25 @@ class MiniCPMOThinkerModelRunner(ThinkerModelRunner):
             hidden = extra.pop("hidden_states", None)
             if hidden is None:
                 continue
+            req = getattr(getattr(sched_req, "data", None), "req", None)
+            if req is not None and getattr(req, "inflight_middle_chunks", 0) > 0:
+                continue
             hidden = hidden.reshape(-1, hidden.shape[-1])[-1]
             seq = self._pending_hidden.setdefault(sched_req.request_id, [])
             seq.append(hidden.detach().clone())
+
+    def finalize_skip_rids(self, scheduler_output: Any) -> set[str]:
+        """Do not advance generation state for non-final prefill chunks."""
+        return {
+            sched_req.request_id
+            for sched_req in scheduler_output.requests
+            if getattr(
+                getattr(getattr(sched_req, "data", None), "req", None),
+                "inflight_middle_chunks",
+                0,
+            )
+            > 0
+        }
 
     def on_request_finished(self, request_id: str, req_data: Any) -> None:
         """Flush the request's hidden accumulator with a single D2H copy."""

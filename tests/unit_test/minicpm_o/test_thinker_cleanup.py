@@ -91,3 +91,27 @@ def test_finish_flushes_cloned_hidden_states_and_abort_drops_them():
     runner.on_request_finished("aborted", aborted_data)
     assert aborted_data.extra_model_outputs == {}
     assert not runner._pending_hidden
+
+
+def test_middle_prefill_chunk_does_not_capture_hidden_or_advance_state():
+    runner = _runner()
+    middle_req = SimpleNamespace(
+        request_id="middle",
+        data=SimpleNamespace(req=SimpleNamespace(inflight_middle_chunks=1)),
+    )
+    final_req = SimpleNamespace(
+        request_id="final",
+        data=SimpleNamespace(req=SimpleNamespace(inflight_middle_chunks=0)),
+    )
+    scheduler_output = SimpleNamespace(requests=[middle_req, final_req])
+    outputs = {
+        "middle": SimpleNamespace(extra={"hidden_states": torch.ones(1, 4)}),
+        "final": SimpleNamespace(extra={"hidden_states": torch.zeros(1, 4)}),
+    }
+
+    runner.post_process_outputs(None, scheduler_output, outputs)
+
+    assert set(runner._pending_hidden) == {"final"}
+    assert outputs["middle"].extra == {}
+    assert outputs["final"].extra == {}
+    assert runner.finalize_skip_rids(scheduler_output) == {"middle"}

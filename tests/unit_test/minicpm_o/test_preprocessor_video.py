@@ -67,6 +67,22 @@ def test_video_to_images_preserves_frame_order_and_rgb() -> None:
     assert all(image.mode == "RGB" for image in images)
 
 
+def test_minicpm_normalizes_openai_text_content_parts() -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Hello"},
+                {"type": "text", "text": " world"},
+            ],
+        }
+    ]
+
+    normalized = MiniCPMOPreprocessor._normalize_message_contents(messages)
+
+    assert normalized == [{"role": "user", "content": "Hello world"}]
+
+
 def test_minicpm_preprocessor_consumes_video_frames_and_audio(
     monkeypatch,
 ) -> None:
