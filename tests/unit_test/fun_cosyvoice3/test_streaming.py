@@ -869,9 +869,11 @@ def _original_select(
             candidates.append((request_id, state, kind))
     candidates.sort(
         key=lambda item: (
-            0.0
-            if item[1].first_emit_at is None
-            else item[1].speech_offset / sample_rate - (now - item[1].first_emit_at),
+            (
+                0.0
+                if item[1].first_emit_at is None
+                else item[1].speech_offset / sample_rate - (now - item[1].first_emit_at)
+            ),
             item[1].ready_since,
             item[0],
         )

@@ -42,6 +42,8 @@ from sglang_omni.utils.audio_payload import audio_waveform_payload
 
 logger = logging.getLogger(__name__)
 
+NextDecode = Literal["causal_window", "leftover", "wait"]
+
 
 @dataclass
 class CosyVoice3StreamState:
@@ -57,7 +59,7 @@ class CosyVoice3StreamState:
     ready_since: float | None = None
     first_emit_at: float | None = None
 
-    def next_decode(self) -> Literal["causal_window", "leftover", "wait"]:
+    def next_decode(self) -> NextDecode:
         causal_token_end = self.token_offset + self.hop_len + PRE_LOOKAHEAD_LEN
         if self.prompt_token is not None and len(self.tokens) >= causal_token_end:
             return "causal_window"
@@ -68,7 +70,7 @@ class CosyVoice3StreamState:
 
 
 class FunCosyVoice3StreamingVocoderScheduler(
-    StreamingVocoderBase[CosyVoice3StreamState, Literal["causal_window", "leftover"]]
+    StreamingVocoderBase[CosyVoice3StreamState, NextDecode]
 ):
     """Decode CosyVoice3 speech tokens incrementally through Flow + HiFT."""
 
@@ -298,7 +300,7 @@ class FunCosyVoice3StreamingVocoderScheduler(
 
     def build_step_plan(
         self, participants: list[tuple[str, CosyVoice3StreamState]]
-    ) -> Literal["causal_window", "leftover"]:
+    ) -> NextDecode:
         decode = participants[0][1].next_decode()
         assert decode != "wait"
         return decode
@@ -306,8 +308,9 @@ class FunCosyVoice3StreamingVocoderScheduler(
     def run_step(
         self,
         participants: list[tuple[str, CosyVoice3StreamState]],
-        plan: Literal["causal_window", "leftover"],
+        plan: NextDecode,
     ) -> dict[str, torch.Tensor]:
+        assert plan != "wait"
         if plan == "leftover":
             request_id, _ = participants[0]
             self._complete_stream_request(request_id, self._finish_stream(request_id))
