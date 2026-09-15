@@ -291,7 +291,7 @@ def modulate(x, shift, scale):
     return x * (1 + scale) + shift
 
 
-class FinalLayer_mlp(nn.Module):
+class FinalLayerMLP(nn.Module):
     """
     The final layer adopted from DiT.
     """
