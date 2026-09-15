@@ -785,7 +785,7 @@ def test_code2wav_chunk_without_stream_metadata_raises():
         sched._on_chunk("req-1", _make_code_chunk(metadata=None))
 
     sched.abort("req-1")
-    assert "req-1" not in sched._stream_states
+    assert "req-1" not in sched.stream_states
 
 
 def test_code2wav_streaming_emits_per_window_and_slim_final():
@@ -869,7 +869,7 @@ def test_code2wav_done_without_audio_raises():
         data={},
     )
     sched._stream_payloads["req-1"] = payload
-    state = sched._get_or_create_stream_state("req-1")
+    state = sched.get_or_create_stream_state("req-1")
     state.stream_enabled = False
 
     with pytest.raises(RuntimeError, match="produced no audio"):
@@ -877,7 +877,7 @@ def test_code2wav_done_without_audio_raises():
     assert not any(m.type == "stream" for m in list(sched.outbox.queue))
 
     sched.abort("req-1")
-    assert "req-1" not in sched._stream_states
+    assert "req-1" not in sched.stream_states
     assert "req-1" not in sched._stream_payloads
 
 
@@ -1128,11 +1128,11 @@ def test_code2wav_abort_clears_all_per_request_state():
         left_context_size=0,
     )
     sched._on_chunk("req-1", _make_code_chunk(metadata={"stream": True}))
-    assert "req-1" in sched._stream_states
-    assert sched._stream_states["req-1"].stream_enabled is True
+    assert "req-1" in sched.stream_states
+    assert sched.stream_states["req-1"].stream_enabled is True
 
     sched.abort("req-1")
-    assert "req-1" not in sched._stream_states
+    assert "req-1" not in sched.stream_states
     assert "req-1" not in sched._stream_payloads
     assert "req-1" not in sched._pending_done
 

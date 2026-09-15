@@ -149,7 +149,7 @@ class DotsTTSStreamingVocoder(
 ):
     """Streaming AudioVAE with slot-pooled equal-T batched eager decode."""
 
-    _can_batch_stream_chunks = True
+    can_batch_stream_chunks = True
     _stream_chunk_batch_distinct_requests = True
 
     def __init__(
@@ -309,7 +309,7 @@ class DotsTTSStreamingVocoder(
     def select_step_participants(self) -> list[tuple[str, _DotsStreamState]]:
         slotted = [
             (request_id, state)
-            for request_id, state in self._stream_state_items()
+            for request_id, state in self.stream_state_items()
             if state.slot is not None and self._pending_ready(state)
         ]
         if not slotted:

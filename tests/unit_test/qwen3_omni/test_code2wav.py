@@ -93,7 +93,7 @@ def _seed_stream_state(
     request_id: str = "req-1",
 ) -> None:
     scheduler._stream_payloads[request_id] = make_qwen_payload(request_id=request_id)
-    scheduler._get_or_create_stream_state(request_id)
+    scheduler.get_or_create_stream_state(request_id)
 
 
 def test_qwen_load_code2wav_model_returns_eval_model(monkeypatch) -> None:
@@ -750,7 +750,7 @@ def test_qwen_code2wav_consumes_borrowed_output_under_state_lock() -> None:
 
         def run(self, codes: torch.Tensor, *, eligible: bool) -> Code2WavRunResult:
             assert eligible
-            self.lock_was_held.append(self.scheduler._state_lock._is_owned())
+            self.lock_was_held.append(self.scheduler.state_lock._is_owned())
             self.replays += 1
             self.static_output.fill_(float(self.replays))
             return Code2WavRunResult(
@@ -786,7 +786,7 @@ def test_qwen_code2wav_consumes_borrowed_output_under_state_lock() -> None:
 
     assert runner.lock_was_held == [True, True]
     assert [
-        chunk.tolist() for chunk in scheduler._stream_states["req-1"].audio_parts
+        chunk.tolist() for chunk in scheduler.stream_states["req-1"].audio_parts
     ] == [
         [1.0, 1.0],
         [2.0, 2.0],
@@ -833,8 +833,8 @@ def test_qwen_code2wav_replay_error_reaches_base_abort_without_eager_retry() -> 
     assert message.request_id == "req-1"
     assert message.type == "error"
     assert message.data is replay_error
-    assert scheduler._is_aborted("req-1")
-    assert "req-1" not in scheduler._stream_states
+    assert scheduler.is_aborted("req-1")
+    assert "req-1" not in scheduler.stream_states
 
 
 def _make_scheduler(model: FakeCode2WavModel) -> Code2WavScheduler:
@@ -876,9 +876,9 @@ def test_qwen_code2wav_streams_incrementally_and_abort_clears_state() -> None:
     assert audio.shape == (6,)
 
     scheduler._stream_payloads["req-2"] = make_qwen_payload(request_id="req-2")
-    scheduler._get_or_create_stream_state("req-2")
+    scheduler.get_or_create_stream_state("req-2")
     scheduler.abort("req-2")
-    assert "req-2" not in scheduler._stream_states
+    assert "req-2" not in scheduler.stream_states
 
 
 def test_streaming_client_gets_stream_chunks_and_metadata_final() -> None:

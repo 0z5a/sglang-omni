@@ -446,4 +446,4 @@ def test_final_payload_recovers_tail_after_early_eos(payload_first):
         _pcm_from_messages(messages, "req"), _fake_decode(codes, eos).numpy()
     )
     assert sum(message.type == "result" for message in messages) == 1
-    assert scheduler._stream_states == {}
+    assert scheduler.stream_states == {}

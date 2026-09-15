@@ -353,7 +353,7 @@ def test_default_session_streaming_lane_capacity(monkeypatch) -> None:
     scheduler = _make_scheduler(monkeypatch, FakeProcessor())
     session = scheduler._ensure_session()
 
-    assert scheduler._max_batch_size == 8
+    assert scheduler.max_batch_size == 8
     # note (Zhang Yiyang): 15 streaming lanes + the 1 lane freed by removing the
     # offline reserve = 16; the freed lane goes to streaming, not the trash.
     assert scheduler._stream_slots == 16
@@ -550,7 +550,7 @@ def test_batched_coalescing_matches_offline_decode(monkeypatch) -> None:
         stream_chunk_frames=10,
         initial_chunk_frames=5,
     )
-    assert scheduler._can_batch_stream_chunks is True
+    assert scheduler.can_batch_stream_chunks is True
     assert (
         scheduler._stream_chunk_batch_max == 8
     )  # follows stream_slots, not max_batch_size
@@ -664,7 +664,7 @@ def test_batched_ingest_failure_aborts_and_cleans_up_off_lock(monkeypatch) -> No
     cleanup_saw_lock_owned: list[bool] = []
 
     def cleanup(request_id: str) -> None:
-        is_owned = getattr(scheduler._state_lock, "_is_owned", lambda: False)
+        is_owned = getattr(scheduler.state_lock, "_is_owned", lambda: False)
         cleanup_saw_lock_owned.append(bool(is_owned()))
         cleanup_calls.append(request_id)
 
@@ -692,8 +692,8 @@ def test_batched_ingest_failure_aborts_and_cleans_up_off_lock(monkeypatch) -> No
 
     assert cleanup_calls == ["bad"]
     assert cleanup_saw_lock_owned == [False]
-    assert scheduler._is_aborted("bad")
-    assert "bad" not in scheduler._stream_states
+    assert scheduler.is_aborted("bad")
+    assert "bad" not in scheduler.stream_states
     assert any(m.request_id == "bad" and m.type == "error" for m in messages)
     np.testing.assert_array_equal(
         _concat_stream_audio(messages, "ok"),
@@ -1245,7 +1245,7 @@ def test_stop_closes_persistent_streaming_session(monkeypatch) -> None:
     scheduler.stop()
 
     assert scheduler._session is None
-    assert scheduler._stream_states == {}
+    assert scheduler.stream_states == {}
     assert scheduler._codec.offsets is None
 
     # Reusing the same codec instance after stop must be able to open a fresh
@@ -1315,8 +1315,8 @@ def test_decode_step_failure_fails_participants_only(monkeypatch) -> None:
     assert all(m.request_id != "c" for m in messages if m.type == "stream")
 
     # Both participants' state is gone and their slots are back in the pool.
-    assert "a" not in scheduler._stream_states
-    assert "b" not in scheduler._stream_states
+    assert "a" not in scheduler.stream_states
+    assert "b" not in scheduler.stream_states
     assert len(scheduler._session._free_stream_slots) == scheduler._stream_slots - 1
 
     # The scheduler keeps serving: a fresh stream decodes normally.
@@ -1347,7 +1347,7 @@ def test_stream_chunk_requires_metadata_contract(monkeypatch) -> None:
     assert "n_vq changed" in str(errors["req2"])
     # note (Gaokai): the serving path aborts a request whose chunk breaks the
     # model contract, so neither request may keep stream state.
-    assert scheduler._stream_states == {}
+    assert scheduler.stream_states == {}
 
 
 def test_stream_chunk_accepts_batched_ar_rows(monkeypatch) -> None:

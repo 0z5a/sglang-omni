@@ -433,7 +433,7 @@ def test_streaming_vocoder_abort_cleans_state_and_suppresses_final() -> None:
         thread.start()
 
         assert "req" not in scheduler._payloads
-        assert "req" not in scheduler._stream_states
+        assert "req" not in scheduler.stream_states
         assert "req" not in scheduler._pending_done
         assert "req" in scheduler._aborted_request_ids
         with pytest.raises(queue.Empty):

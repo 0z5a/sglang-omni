@@ -763,10 +763,10 @@ def test_create_vocoder_executor_defaults_batch_for_real_lengths(monkeypatch) ->
     assert (
         scheduler._max_batch_cost // 713 >= 8
     ), "default admission budget no longer holds a useful batch"
-    assert scheduler._max_batch_size == 16
+    assert scheduler.max_batch_size == 16
     assert scheduler._max_batch_wait_s == pytest.approx(0.03)
-    assert scheduler._vocoder.flow_merge_max_gap_frames == 384
-    assert scheduler._vocoder.flow_merge_pad_budget_percent == 25.0
+    assert scheduler.vocoder.flow_merge_max_gap_frames == 384
+    assert scheduler.vocoder.flow_merge_pad_budget_percent == 25.0
 
 
 def test_create_vocoder_executor_threads_batch_configuration(monkeypatch) -> None:
@@ -806,12 +806,12 @@ def test_create_vocoder_executor_threads_batch_configuration(monkeypatch) -> Non
     )
 
     assert isinstance(scheduler, FunCosyVoice3StreamingVocoderScheduler)
-    assert scheduler._max_batch_size == 6
+    assert scheduler.max_batch_size == 6
     assert scheduler._max_batch_wait_s == pytest.approx(0.007)
     assert scheduler._max_batch_cost == 200
     assert callable(scheduler._request_cost_fn)
-    assert scheduler._vocoder.flow_merge_max_gap_frames == 0
-    assert scheduler._vocoder.flow_merge_pad_budget_percent == 0
+    assert scheduler.vocoder.flow_merge_max_gap_frames == 0
+    assert scheduler.vocoder.flow_merge_pad_budget_percent == 0
     state = _state(prompt_tokens=1)
     state.audio_codes = _codes(2)
     assert scheduler._request_cost_fn(_payload(state)) == 6

@@ -112,7 +112,7 @@ _StreamingStepPlan = tuple[_StreamingStepItem, ...]
 class MingTTSStreamingVocoderScheduler(
     StreamingVocoderBase[_StreamState, _StreamingStepPlan]
 ):
-    _can_batch_stream_chunks = True
+    can_batch_stream_chunks = True
 
     def __init__(
         self,
@@ -168,7 +168,7 @@ class MingTTSStreamingVocoderScheduler(
         request_id: str,
         item: StreamItem,
     ) -> _StreamState | None:
-        state = self._get_or_create_stream_state(request_id)
+        state = self.get_or_create_stream_state(request_id)
         if state is None:
             return None
         metadata = item.metadata
@@ -250,8 +250,8 @@ class MingTTSStreamingVocoderScheduler(
         # thread resets its CUDA row before that slot can be reused.
         self._drain_pending_releases()
         participants = []
-        for request_id, state in self._stream_state_items():
-            if self._is_aborted(request_id) or not self._has_executable_work(state):
+        for request_id, state in self.stream_state_items():
+            if self.is_aborted(request_id) or not self._has_executable_work(state):
                 continue
             if self._slot_bindings.try_bind(request_id) is None:
                 continue

@@ -253,7 +253,7 @@ def _raw_chunk(request_id: str, value: object) -> IncomingMessage:
 
 
 class _BatchStreamingScheduler(_TestStreamingScheduler):
-    _can_batch_stream_chunks = True
+    can_batch_stream_chunks = True
 
     def __init__(self, **kw: int) -> None:
         self.pump_batches: list[list[str]] = []
@@ -262,7 +262,7 @@ class _BatchStreamingScheduler(_TestStreamingScheduler):
     def on_stream_chunk_batch(self, items):
         self.pump_batches.append([rid for rid, _ in items])
         for request_id, item in items:
-            if self._is_aborted(request_id):
+            if self.is_aborted(request_id):
                 continue
             self.outbox.put(
                 OutgoingMessage(
@@ -275,7 +275,7 @@ class _BatchStreamingScheduler(_TestStreamingScheduler):
 
 
 class _DefaultBatchScheduler(_TestStreamingScheduler):
-    _can_batch_stream_chunks = True
+    can_batch_stream_chunks = True
 
 
 class _DistinctBatchStreamingScheduler(_BatchStreamingScheduler):
@@ -367,7 +367,7 @@ def test_stream_chunk_batch_default_hook_emits_per_chunk_in_order() -> None:
 
 
 class _RaisingDefaultBatchScheduler(_TestStreamingScheduler):
-    _can_batch_stream_chunks = True
+    can_batch_stream_chunks = True
 
     def on_stream_chunk(self, request_id, item):
         if request_id == "bad":
@@ -383,7 +383,7 @@ def test_stream_chunk_batch_default_hook_isolates_failing_item() -> None:
     out = _drain_results(scheduler)
     assert [m.request_id for m in out if m.type == "stream"] == ["a", "c"]
     assert any(m.request_id == "bad" and m.type == "error" for m in out)
-    assert scheduler._is_aborted("bad")
+    assert scheduler.is_aborted("bad")
 
 
 def test_stream_chunk_batch_validates_items_before_hook() -> None:
@@ -397,7 +397,7 @@ def test_stream_chunk_batch_validates_items_before_hook() -> None:
     assert scheduler.pump_batches == [["a", "c"]]
     assert [m.request_id for m in out if m.type == "stream"] == ["a", "c"]
     assert any(m.request_id == "bad" and m.type == "error" for m in out)
-    assert scheduler._is_aborted("bad")
+    assert scheduler.is_aborted("bad")
 
 
 def test_stream_chunk_batch_filters_request_aborted_during_validation() -> None:
@@ -410,7 +410,7 @@ def test_stream_chunk_batch_filters_request_aborted_during_validation() -> None:
     out = _drain_results(scheduler)
     assert [m.request_id for m in out if m.type == "stream"] == ["c"]
     assert any(m.request_id == "bad" and m.type == "error" for m in out)
-    assert scheduler._is_aborted("bad")
+    assert scheduler.is_aborted("bad")
     assert "bad" not in scheduler.stream_state
 
 
@@ -420,10 +420,10 @@ class _ReadyStepScheduler(_TestStreamingScheduler):
         self.ready = False
         super().__init__(**kw)
 
-    def _has_ready_work(self) -> bool:
+    def has_ready_work(self) -> bool:
         return self.ready
 
-    def _run_ready_step(self) -> None:
+    def run_ready_step(self) -> None:
         self.events.append("step")
         self.ready = False
         self.stop()
@@ -465,7 +465,7 @@ def test_stream_done_returning_none_defers_completion() -> None:
     assert "req" not in scheduler._pending_done
     assert _drain_results(scheduler) == []
 
-    scheduler._complete_stream_request(
+    scheduler.complete_stream_request(
         "req", [OutgoingMessage("req", "result", {"done": "req"})]
     )
 

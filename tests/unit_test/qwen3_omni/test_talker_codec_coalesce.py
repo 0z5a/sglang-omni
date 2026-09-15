@@ -258,7 +258,7 @@ def test_ingest_unbinds_coalesced_chunk_and_decodes() -> None:
         ),
     )
     assert model.calls == [(1, 2, 2)]
-    state = scheduler._stream_states["req-1"]
+    state = scheduler.stream_states["req-1"]
     assert all(chunk.ndim == 1 for chunk in state.chunks)
 
 

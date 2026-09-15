@@ -372,7 +372,7 @@ class Zonos2StreamingVocoderScheduler(StreamingVocoderBase[_Zonos2StreamState, N
         del request_id
         return audio_waveform_payload(
             waveform.detach().to("cpu", torch.float32),
-            sample_rate=self._sample_rate,
+            sample_rate=self.sample_rate,
             modality="audio",
             source_hint="ZONOS2 streaming",
         )

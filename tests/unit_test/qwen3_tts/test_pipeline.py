@@ -2008,7 +2008,7 @@ def test_qwen3_tts_vocoder_batches_decode_requests(
 
     results = asyncio.run(scheduler._batch_fn([first, second]))
 
-    assert scheduler._max_batch_size == 2
+    assert scheduler.max_batch_size == 2
     assert scheduler._max_batch_wait_s == pytest.approx(0.003)
     assert decode_batch_sizes == [2]
     assert results[0].data["sample_rate"] == 24000
@@ -2375,7 +2375,7 @@ def _admit_reference_stream(
     ref_code_len: int,
 ) -> _Qwen3TTSStreamState:
     state = scheduler.create_stream_state(request_id)
-    scheduler._stream_states[request_id] = state
+    scheduler.stream_states[request_id] = state
     scheduler.latch_stream_contract(
         request_id,
         state,
@@ -3180,8 +3180,8 @@ def test_qwen3_tts_initial_chunk_override_is_message_order_independent() -> None
     chunk.metadata["initial_codec_chunk_frames"] = 32
     scheduler._on_chunk("chunk-first", chunk)
 
-    assert scheduler._stream_states["payload-first"].initial_chunk_frames == 16
-    assert scheduler._stream_states["chunk-first"].initial_chunk_frames == 16
+    assert scheduler.stream_states["payload-first"].initial_chunk_frames == 16
+    assert scheduler.stream_states["chunk-first"].initial_chunk_frames == 16
 
 
 def test_qwen3_tts_streaming_vocoder_keeps_codec_chunks_on_source_device() -> None:
@@ -4089,7 +4089,7 @@ def test_qwen3_tts_streaming_vocoder_uses_steady_followup_stride() -> None:
             ref_code_len=0,
         ),
     )
-    state = scheduler._stream_states[payload.request_id]
+    state = scheduler.stream_states[payload.request_id]
     assert state.next_decode_generated_frames == initial_frames + 8
 
     scheduler._on_chunk(
@@ -4516,7 +4516,7 @@ def test_qwen3_tts_streaming_vocoder_short_utterance_flushes_complete_audio() ->
     expected = all_codes[ref_frames:, 0].to(torch.float32).repeat_interleave(4).numpy()
     np.testing.assert_array_equal(stream_audio, expected)
     assert any(message.type == "result" for message in messages)
-    assert payload.request_id not in scheduler._stream_states
+    assert payload.request_id not in scheduler.stream_states
 
 
 def test_qwen3_tts_stream_output_prepends_reference_once() -> None:
@@ -4732,7 +4732,7 @@ def test_qwen3_tts_bootstrap_suppression_credits_only_emitted_audio() -> None:
     assert int(emitted.shape[-1]) == frame * (state.initial_chunk_frames - 1)
     credited = state.playback_deadline_s - time.monotonic()
     assert credited == pytest.approx(
-        float(emitted.numel()) / scheduler._sample_rate, abs=0.05
+        float(emitted.numel()) / scheduler.sample_rate, abs=0.05
     )
 
 
@@ -4745,16 +4745,16 @@ def test_qwen3_tts_bootstrap_suppression_skips_at_high_concurrency() -> None:
     metadata = {"num_quantizers": 2, "bootstrap_silence_suppression": True}
 
     under = scheduler.create_stream_state("a")
-    scheduler._stream_states["a"] = under
+    scheduler.stream_states["a"] = under
     scheduler.latch_stream_contract("a", under, metadata, origin="metadata")
     assert under.suppress_bootstrap is True
 
     # A third live stream puts the vocoder past the gate, so the extra
     # first-chunk frame is not spent and the silence is left in place.
     for rid in ("b", "c"):
-        scheduler._stream_states[rid] = scheduler.create_stream_state(rid)
+        scheduler.stream_states[rid] = scheduler.create_stream_state(rid)
     over = scheduler.create_stream_state("d")
-    scheduler._stream_states["d"] = over
+    scheduler.stream_states["d"] = over
     scheduler.latch_stream_contract("d", over, metadata, origin="metadata")
     assert over.suppress_bootstrap is False
     assert (
@@ -4919,7 +4919,7 @@ def test_qwen3_tts_streaming_vocoder_matches_full_decode() -> None:
             "total_tokens": 5,
         },
     }
-    assert payload.request_id not in scheduler._stream_states
+    assert payload.request_id not in scheduler.stream_states
 
 
 def test_qwen3_tts_streaming_fallback_matches_full_decode_reference_trim() -> None:
@@ -4994,7 +4994,7 @@ def test_qwen3_tts_async_followup_flushes_before_result() -> None:
     )
     expected = all_codes[:, 0].to(torch.float32).repeat_interleave(4).numpy()
     np.testing.assert_array_equal(streamed, expected)
-    assert payload.request_id not in scheduler._stream_states
+    assert payload.request_id not in scheduler.stream_states
 
 
 def test_qwen3_tts_async_initial_batches_ready_requests() -> None:
@@ -5073,7 +5073,7 @@ def test_qwen3_tts_async_initial_flushes_before_result() -> None:
 
     assert stream.type == "stream"
     assert result.type == "result"
-    assert payload.request_id not in scheduler._stream_states
+    assert payload.request_id not in scheduler.stream_states
 
 
 def test_qwen3_tts_async_followup_round_robins_backlog() -> None:
@@ -5228,7 +5228,7 @@ def test_qwen3_tts_async_worker_propagates_process_exit(
     state.total_frames = 1
     if worker == "followup":
         state.decoded_chunks = 1
-    scheduler._stream_states["request"] = state
+    scheduler.stream_states["request"] = state
 
     def interrupt(*args, **kwargs):
         del args, kwargs
@@ -5262,7 +5262,7 @@ def test_qwen3_tts_async_commit_propagates_process_exit(
     state.num_quantizers = 2
     state.code_chunks.append(torch.ones((1, 2), dtype=torch.long))
     state.total_frames = 1
-    scheduler._stream_states["request"] = state
+    scheduler.stream_states["request"] = state
     plan = scheduler._build_decode_plan(state, is_final=False)
     assert plan is not None
 
@@ -5330,7 +5330,7 @@ def test_qwen3_tts_async_followup_drops_late_audio_after_abort() -> None:
         release.set()
         scheduler.stop()
 
-    assert payload.request_id not in scheduler._stream_states
+    assert payload.request_id not in scheduler.stream_states
 
 
 def test_qwen3_tts_async_initial_drops_late_audio_after_abort() -> None:
@@ -5374,7 +5374,7 @@ def test_qwen3_tts_async_initial_drops_late_audio_after_abort() -> None:
         release.set()
         scheduler.stop()
 
-    assert payload.request_id not in scheduler._stream_states
+    assert payload.request_id not in scheduler.stream_states
 
 
 def test_qwen3_tts_result_adapter_keeps_code_handoff_tensor_native() -> None:
@@ -7252,7 +7252,7 @@ def test_qwen3_tts_codec_slot_is_released_when_the_stream_finishes(
     arena = scheduler._codec_arena
     assert arena is not None
     state = scheduler.create_stream_state("request")
-    scheduler._stream_states["request"] = state
+    scheduler.stream_states["request"] = state
     state.initial_chunk_frames = 2
     state.code_chunks.append(torch.tensor([[10, 1], [20, 2]], dtype=torch.long))
     state.total_frames = 2
@@ -7281,7 +7281,7 @@ def test_qwen3_tts_codec_slot_release_waits_for_an_in_flight_decode(
     arena = scheduler._codec_arena
     assert arena is not None
     state = scheduler.create_stream_state("request")
-    scheduler._stream_states["request"] = state
+    scheduler.stream_states["request"] = state
     state.initial_chunk_frames = 2
     state.code_chunks.append(torch.tensor([[10, 1], [20, 2]], dtype=torch.long))
     state.total_frames = 2
@@ -7335,7 +7335,7 @@ def test_qwen3_tts_incremental_failure_requeues_instead_of_aborting(
     arena = scheduler._codec_arena
     assert arena is not None
     state = scheduler.create_stream_state("request")
-    scheduler._stream_states["request"] = state
+    scheduler.stream_states["request"] = state
     state.decoded_chunks = 1
     state.followup_pending = True
     state.codec_slot = arena.acquire()
@@ -7348,7 +7348,7 @@ def test_qwen3_tts_incremental_failure_requeues_instead_of_aborting(
     assert state.incremental_codec_fallback is True
     assert state.codec_slot is None
     assert arena.active_slots() == 0
-    assert "request" in scheduler._stream_states
+    assert "request" in scheduler.stream_states
     assert state.followup_pending is True
     assert scheduler._followup_queue.qsize() == 1
     assert scheduler.codec_state_stats()["left_context_fallbacks"] == 1

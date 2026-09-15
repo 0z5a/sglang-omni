@@ -252,7 +252,7 @@ def test_chunks_and_done_before_payload_preserve_final_tail() -> None:
     ]
     np.testing.assert_array_equal(np.concatenate(chunks), full.numpy())
     assert "req" not in scheduler._pending_done
-    assert "req" not in scheduler._stream_states
+    assert "req" not in scheduler.stream_states
 
 
 def test_abort_drops_state_and_late_chunks() -> None:
@@ -261,10 +261,10 @@ def test_abort_drops_state_and_late_chunks() -> None:
     )
     scheduler, _, _ = _make_scheduler()
     scheduler._on_chunk("req", _item(delayed[:2]))
-    assert "req" in scheduler._stream_states
+    assert "req" in scheduler.stream_states
 
     scheduler.abort("req")
     scheduler._on_chunk("req", _item(delayed[2:]))
 
-    assert "req" not in scheduler._stream_states
+    assert "req" not in scheduler.stream_states
     assert _drain(scheduler) == []

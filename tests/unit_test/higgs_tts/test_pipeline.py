@@ -1797,7 +1797,7 @@ def test_higgs_streaming_vocoder_emits_compact_chunks_and_slim_final() -> None:
         },
     }
     assert "req" not in scheduler._pending_done
-    assert "req" not in scheduler._stream_states
+    assert "req" not in scheduler.stream_states
 
 
 def test_higgs_streaming_vocoder_honors_initial_codec_chunk_frames() -> None:
@@ -2059,7 +2059,7 @@ def test_higgs_stream_contract_change_rejects_chunk_without_buffering() -> None:
         scheduler._on_chunk("req", _higgs_stream_item(row, num_codebooks=4))
     with pytest.raises(ValueError, match="codebook_size changed for"):
         scheduler._on_chunk("req", _higgs_stream_item(row, codebook_size=21))
-    assert scheduler._stream_states["req"].delayed_rows == []
+    assert scheduler.stream_states["req"].delayed_rows == []
 
 
 def test_higgs_stream_contract_requires_integer_values() -> None:
@@ -2071,7 +2071,7 @@ def test_higgs_stream_contract_requires_integer_values() -> None:
     item.metadata["num_codebooks"] = "three"
     with pytest.raises(TypeError, match="must include integer"):
         scheduler._on_chunk("req", item)
-    assert scheduler._stream_states["req"].delayed_rows == []
+    assert scheduler.stream_states["req"].delayed_rows == []
 
 
 def test_higgs_streaming_payload_missing_contract_fields_errors() -> None:

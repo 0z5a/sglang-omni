@@ -245,7 +245,7 @@ def _force_pipeline(scheduler: Code2WavScheduler, monkeypatch) -> list:
 
 def _seed(scheduler: Code2WavScheduler, request_id: str = "req-1") -> None:
     scheduler._stream_payloads[request_id] = make_qwen_payload(request_id=request_id)
-    scheduler._get_or_create_stream_state(request_id)
+    scheduler.get_or_create_stream_state(request_id)
 
 
 def _chunk(index: int) -> torch.Tensor:
@@ -388,7 +388,7 @@ def test_overlap_flush_failure_keeps_pending_owned_until_abort(monkeypatch) -> N
     _seed(scheduler)
     _feed(scheduler, "req-1", range(20))
 
-    state = scheduler._stream_states["req-1"]
+    state = scheduler.stream_states["req-1"]
     pending = state.pending
     assert pending is not None
     event = _slot_event(pending.slot)
@@ -414,7 +414,7 @@ def test_overlap_abort_retires_inflight_slot_without_synchronizing(monkeypatch) 
     _seed(scheduler)
     _feed(scheduler, "req-1", range(20))
 
-    state = scheduler._stream_states["req-1"]
+    state = scheduler.stream_states["req-1"]
     pending = state.pending
     assert pending is not None
     event = _slot_event(pending.slot)
@@ -434,7 +434,7 @@ def test_overlap_acquire_reaps_completed_retired_slot(monkeypatch) -> None:
     _seed(scheduler)
     _feed(scheduler, "req-1", range(20))
 
-    pending = scheduler._stream_states["req-1"].pending
+    pending = scheduler.stream_states["req-1"].pending
     assert pending is not None
     slot = pending.slot
     _slot_event(slot).complete = False
@@ -454,7 +454,7 @@ def test_overlap_query_failure_quarantines_slot(monkeypatch, caplog) -> None:
     _seed(scheduler)
     _feed(scheduler, "req-1", range(20))
 
-    pending = scheduler._stream_states["req-1"].pending
+    pending = scheduler.stream_states["req-1"].pending
     assert pending is not None
     slot = pending.slot
     _slot_event(slot).query_error = RuntimeError("event query failed")
@@ -475,7 +475,7 @@ def test_overlap_previous_flush_failure_keeps_both_slots_owned(monkeypatch) -> N
     _seed(scheduler)
     _feed(scheduler, "req-1", range(20))
 
-    state = scheduler._stream_states["req-1"]
+    state = scheduler.stream_states["req-1"]
     previous = state.pending
     assert previous is not None
     _slot_event(previous.slot).complete = False
@@ -515,7 +515,7 @@ def test_overlap_record_failure_quarantines_current_slot(monkeypatch) -> None:
     assert scheduler._pinned_retired == []
     assert scheduler._pinned_free == []
     assert scheduler._pipeline_active is False
-    assert scheduler._stream_states["req-1"].pending is None
+    assert scheduler.stream_states["req-1"].pending is None
     # The slot must not treat the failed transfer as complete.
     with pytest.raises(RuntimeError, match="not recorded"):
         scheduler._pinned_quarantined[0].query()
@@ -529,7 +529,7 @@ def test_overlap_rerecord_failure_on_reused_slot_quarantines_it(monkeypatch) -> 
     scheduler = _make_scheduler(overlap=True)
     _force_pipeline(scheduler, monkeypatch)
     _seed(scheduler)
-    state_lookup = scheduler._stream_states
+    state_lookup = scheduler.stream_states
 
     _feed(scheduler, "req-1", range(20))  # window 2 pipelined on slot A
     first = state_lookup["req-1"].pending
@@ -597,7 +597,7 @@ def test_overlap_flush_synchronizes_before_releasing_slot(monkeypatch) -> None:
     _seed(scheduler)
     _feed(scheduler, "req-1", range(20))
 
-    pending = scheduler._stream_states["req-1"].pending
+    pending = scheduler.stream_states["req-1"].pending
     assert pending is not None
     event = _slot_event(pending.slot)
 
@@ -669,8 +669,8 @@ def test_overlap_replay_failure_with_pending_aborts_and_releases(monkeypatch) ->
     assert not thread.is_alive()
 
     assert messages[-1].data is replay_error
-    assert scheduler._is_aborted("req-1")
-    assert "req-1" not in scheduler._stream_states
+    assert scheduler.is_aborted("req-1")
+    assert "req-1" not in scheduler.stream_states
     # Note (edwardzh): reclaimed via release_stream_resources, which is
     # the only path an aborted request takes.
     # Note (wenyao): two — the second window's copy had drained before the third
@@ -834,11 +834,11 @@ def test_overlap_drained_window_is_emitted_without_a_further_dispatch(
     _seed(scheduler)
 
     _feed(scheduler, "req-1", range(20))
-    assert scheduler._stream_states["req-1"].pending is not None
+    assert scheduler.stream_states["req-1"].pending is not None
     assert [item[1] for item in _drain_snapshot(scheduler)] == ["stream"]
 
     _feed(scheduler, "req-1", range(20, 21))
-    assert scheduler._stream_states["req-1"].pending is None
+    assert scheduler.stream_states["req-1"].pending is None
     assert [item[1] for item in _drain_snapshot(scheduler)] == ["stream"]
 
 
@@ -885,7 +885,7 @@ def test_overlap_borrowed_output_copied_before_next_replay(monkeypatch) -> None:
     _force_pipeline(scheduler, monkeypatch)
     _seed(scheduler)
     _feed(scheduler, "req-1", range(3))
-    state = scheduler._stream_states["req-1"]
+    state = scheduler.stream_states["req-1"]
     scheduler._on_done("req-1")
 
     # Note (edwardzh): replay N+1 overwrites the static buffer before
@@ -962,7 +962,7 @@ def test_overlap_gpu_query_is_false_until_inflight_copy_drains() -> None:
     )
     _seed(scheduler)
     _feed(scheduler, "req-1", range(20), chunks=chunks)
-    state = scheduler._stream_states["req-1"]
+    state = scheduler.stream_states["req-1"]
     pending = state.pending
     assert pending is not None
     assert pending.slot.device == device
@@ -1015,7 +1015,7 @@ def test_overlap_gpu_abort_midstream_neither_blocks_nor_reuses_inflight_slot(
     )
     _seed(scheduler)
     _feed(scheduler, "req-1", range(20), chunks=chunks)
-    state = scheduler._stream_states["req-1"]
+    state = scheduler.stream_states["req-1"]
     pending = state.pending
     assert pending is not None
     slot = pending.slot
@@ -1026,7 +1026,7 @@ def test_overlap_gpu_abort_midstream_neither_blocks_nor_reuses_inflight_slot(
     # A synchronizing abort would have drained the copy.
     assert slot.query() is False
     assert state.pending is None
-    assert "req-1" not in scheduler._stream_states
+    assert "req-1" not in scheduler.stream_states
     assert scheduler._pinned_retired == [slot]
     assert scheduler._pinned_free == []
 
@@ -1089,7 +1089,7 @@ def test_overlap_gpu_slot_on_other_device_than_process_current() -> None:
         assert torch.cuda.current_device() == 0
         _seed(scheduler)
         _feed(scheduler, "req-1", range(20), chunks=chunks)
-        state = scheduler._stream_states["req-1"]
+        state = scheduler.stream_states["req-1"]
         pending = state.pending
         assert pending is not None
         assert pending.slot.device == device
@@ -1124,7 +1124,7 @@ def test_overlap_gpu_slot_on_other_device_than_process_current() -> None:
         # thread pumps or stops the stage.
         _seed(scheduler, "req-2")
         _feed(scheduler, "req-2", range(20), chunks=chunks)
-        retired = scheduler._stream_states["req-2"].pending
+        retired = scheduler.stream_states["req-2"].pending
         assert retired is not None
         torch.cuda.set_device(0)
         scheduler.abort("req-2")
@@ -1157,4 +1157,4 @@ def test_stream_done_flushes_tail_before_the_payload_latch() -> None:
 
     scheduler._on_streaming_new_request("req-1", make_qwen_payload(request_id="req-1"))
     assert [item[1] for item in _drain_snapshot(scheduler)] == ["result"]
-    assert scheduler._stream_states == {}
+    assert scheduler.stream_states == {}
