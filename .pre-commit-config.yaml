@@ -42,8 +42,6 @@ repos:
       - id: ruff
         alias: ruff-guide
         name: ruff (coding guide)
-        # ponytail: manual until the existing style debt is resolved, then enable in CI.
-        # pre-commit run ruff-guide --hook-stage manual --all-files
         stages: [manual]
         types_or: [python, pyi]
   - repo: https://github.com/psf/black

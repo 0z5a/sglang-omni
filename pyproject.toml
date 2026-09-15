@@ -148,8 +148,6 @@ markers = [
     "accelerator: requires accelerator hardware",
 ]
 
-# Style guide: https://github.com/zhaochenyang20/sglang-diffusion-routing/issues/32
-# Includes the follow-up comments; rule names describe the enforceable subset.
 [tool.ruff]
 target-version = "py310"
 required-version = "==0.15.9"
@@ -157,7 +155,6 @@ extend-exclude = [".claude/skills", "*.ipynb"]
 force-exclude = true
 
 [tool.ruff.lint]
-# PLR1702 needs preview; keep other preview-only rules opt-in.
 preview = true
 explicit-preview-rules = true
 select = [
@@ -211,12 +208,6 @@ ban-relative-imports = "all"
 "sys.path.insert".msg = "Use package imports or configure PYTHONPATH instead of mutating sys.path."
 "sys.path.append".msg = "Use package imports or configure PYTHONPATH instead of mutating sys.path."
 "sys.path.extend".msg = "Use package imports or configure PYTHONPATH instead of mutating sys.path."
-
-# Ruff cannot enforce physical file/function length, complete assignment branches,
-# semantic naming, comment language/reasons, or thread/GPU/purity contracts.
-# B009/B010 do not ban hasattr, computed attribute names, or getattr fallbacks.
-# Bare container/any annotations need a type checker. RET505-RET508 would remove
-# explicit else branches requested by the guide, so they are not enabled.
 
 [tool.setuptools.packages.find]
 where = ["."]
