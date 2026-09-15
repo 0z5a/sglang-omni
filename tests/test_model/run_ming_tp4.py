@@ -24,6 +24,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 
 
@@ -242,17 +243,16 @@ def _start_server(args: argparse.Namespace, log_path: Path) -> subprocess.Popen:
     print("[server] " + " ".join(command), flush=True)
     print(f"[server] CUDA_VISIBLE_DEVICES={args.cuda_visible_devices}", flush=True)
     print(f"[server] log: {log_path}", flush=True)
-    log_file = open(log_path, "w", buffering=1)
-    process = subprocess.Popen(
-        command,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        env=env,
-        cwd=os.getcwd(),
-        start_new_session=True,
-        text=True,
-    )
-    process._log_file = log_file  # type: ignore[attr-defined]
+    with open(log_path, "w", buffering=1) as log_file:
+        process = subprocess.Popen(
+            command,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            env=env,
+            cwd=os.getcwd(),
+            start_new_session=True,
+            text=True,
+        )
     if not args.quiet_server_log:
         thread = threading.Thread(
             target=_mirror_server_log,
@@ -584,9 +584,6 @@ def _stop_server(process: subprocess.Popen | None) -> None:
     log_thread = getattr(process, "_log_thread", None)
     if log_thread is not None:
         log_thread.join(timeout=2)
-    log_file = getattr(process, "_log_file", None)
-    if log_file is not None:
-        log_file.close()
 
 
 def _tail(path: Path, n: int = 160) -> None:
@@ -603,42 +600,38 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     log_path = output_dir / "server.log"
-    run_log_file = None
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    if not args.no_run_log:
-        run_log_path = Path(args.run_log) if args.run_log else output_dir / "run.log"
-        run_log_path.parent.mkdir(parents=True, exist_ok=True)
-        run_log_file = open(run_log_path, "w", buffering=1)
-        sys.stdout = _TeeStream(original_stdout, run_log_file)  # type: ignore[assignment]
-        sys.stderr = _TeeStream(original_stderr, run_log_file)  # type: ignore[assignment]
-        print(f"[runner] log: {run_log_path}", flush=True)
+    with ExitStack() as stack:
+        if not args.no_run_log:
+            run_log_path = (
+                Path(args.run_log) if args.run_log else output_dir / "run.log"
+            )
+            run_log_path.parent.mkdir(parents=True, exist_ok=True)
+            run_log_file = stack.enter_context(open(run_log_path, "w", buffering=1))
+            stack.enter_context(redirect_stdout(_TeeStream(sys.stdout, run_log_file)))
+            stack.enter_context(redirect_stderr(_TeeStream(sys.stderr, run_log_file)))
+            print(f"[runner] log: {run_log_path}", flush=True)
 
-    process: subprocess.Popen | None = None
-    try:
-        if not args.skip_server:
-            process = _start_server(args, log_path)
-        _wait_ready(args, process)
-        _run_smoke_tests(args)
-        if args.run_mmmu:
-            _run_mmmu_benchmark(args)
-        if args.run_mmsu:
-            _run_mmsu_benchmark(args)
-        if args.run_tts:
-            _run_tts_benchmark(args)
-        if args.keep_server:
-            print(f"[server] keeping server alive; log={log_path}", flush=True)
-            process = None
-    except Exception:
-        _tail(log_path)
-        raise
-    finally:
-        if not args.keep_server:
-            _stop_server(process)
-        if run_log_file is not None:
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-            run_log_file.close()
+        process: subprocess.Popen | None = None
+        try:
+            if not args.skip_server:
+                process = _start_server(args, log_path)
+            _wait_ready(args, process)
+            _run_smoke_tests(args)
+            if args.run_mmmu:
+                _run_mmmu_benchmark(args)
+            if args.run_mmsu:
+                _run_mmsu_benchmark(args)
+            if args.run_tts:
+                _run_tts_benchmark(args)
+            if args.keep_server:
+                print(f"[server] keeping server alive; log={log_path}", flush=True)
+                process = None
+        except Exception:
+            _tail(log_path)
+            raise
+        finally:
+            if not args.keep_server:
+                _stop_server(process)
 
 
 if __name__ == "__main__":

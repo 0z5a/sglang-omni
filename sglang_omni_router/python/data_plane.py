@@ -769,12 +769,11 @@ def create_dp_app_from_env() -> FastAPI:
 
     admission = None
     shm_path = os.environ.get(ADMISSION_SHM_ENV)
-    admission_file = None
     if shm_path:
-        admission_file = open(shm_path, "r+b")
-        admission_mmap = mmap_module.mmap(
-            admission_file.fileno(), admission_file_size(total)
-        )
+        with open(shm_path, "r+b") as admission_file:
+            admission_mmap = mmap_module.mmap(
+                admission_file.fileno(), admission_file_size(total)
+            )
         admission = SharedAdmission(
             admission_mmap,
             slots=total,
@@ -785,7 +784,7 @@ def create_dp_app_from_env() -> FastAPI:
             on_fenced=_default_fence_reaction,
         )
 
-    app = create_data_plane_app(
+    return create_data_plane_app(
         config,
         snapshot_path=os.environ[SNAPSHOT_PATH_ENV],
         dp_index=dp_index,
@@ -796,6 +795,3 @@ def create_dp_app_from_env() -> FastAPI:
         admission=admission,
         total_data_planes=total,
     )
-    # Note (Jiaxin Deng): keep the shm file object alive for the app's lifetime.
-    app.state.admission_shm_file = admission_file
-    return app

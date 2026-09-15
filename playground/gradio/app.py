@@ -9,6 +9,7 @@ import json
 import mimetypes
 import tempfile
 from collections.abc import Generator
+from contextlib import ExitStack
 from pathlib import Path
 
 import gradio as gr
@@ -172,33 +173,36 @@ def make_chat_handler(api_base: str):
             {"role": "user", "content": user_content},
             {"role": "assistant", "content": ""},
         ]
-        try:
-            for chunk in stream_chat_completion(api_base, payload):
-                if chunk["type"] == "text":
-                    assistant_text += chunk["value"]
-                    display_out[-1] = {
-                        "role": "assistant",
-                        "content": assistant_text,
-                    }
-                    yield display_out, new_api_history, audio_path
-                elif chunk["type"] == "audio":
-                    raw = base64.b64decode(chunk["value"])
-                    tmp = tempfile.NamedTemporaryFile(suffix=".wav")
-                    tmp.write(raw)
-                    tmp.close()
-                    audio_path = tmp.name
-                    yield display_out, new_api_history, audio_path
-        except Exception as exc:
-            error_msg = f"Error: {exc}"
-            display_out[-1] = {"role": "assistant", "content": error_msg}
-            yield display_out, new_api_history, audio_path
-            return
+        with ExitStack() as stack:
+            try:
+                for chunk in stream_chat_completion(api_base, payload):
+                    if chunk["type"] == "text":
+                        assistant_text += chunk["value"]
+                        display_out[-1] = {
+                            "role": "assistant",
+                            "content": assistant_text,
+                        }
+                        yield display_out, new_api_history, audio_path
+                    elif chunk["type"] == "audio":
+                        raw = base64.b64decode(chunk["value"])
+                        tmp = stack.enter_context(
+                            tempfile.NamedTemporaryFile(suffix=".wav")
+                        )
+                        tmp.write(raw)
+                        tmp.flush()
+                        audio_path = tmp.name
+                        yield display_out, new_api_history, audio_path
+            except Exception as exc:
+                error_msg = f"Error: {exc}"
+                display_out[-1] = {"role": "assistant", "content": error_msg}
+                yield display_out, new_api_history, audio_path
+                return
 
-        # Append assistant response to API history
-        new_api_history = new_api_history + [
-            {"role": "assistant", "content": assistant_text}
-        ]
-        yield display_out, new_api_history, audio_path
+            # Append assistant response to API history
+            new_api_history = new_api_history + [
+                {"role": "assistant", "content": assistant_text}
+            ]
+            yield display_out, new_api_history, audio_path
 
     return chat_handler
 

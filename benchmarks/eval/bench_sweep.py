@@ -85,26 +85,20 @@ def _spawn_client(out, stage_dir, per_client_rate, samples, offset, i):
         cmd.extend(["--ref-format", "references"])
     else:
         cmd.append("--no-ref-audio")
-    logf = open(os.path.join(stage_dir, f"client{i}.log"), "w")
     preexec = None
     if os.environ.get("CLIENT_CORES"):
         client_cores = {int(c) for c in os.environ["CLIENT_CORES"].split(",")}
         preexec = lambda: os.sched_setaffinity(0, client_cores)  # noqa: E731
     # Note (Yueying Li): each client gets its own session so teardown can signal
-    # the whole process tree; close the log handle ourselves if Popen never
-    # returns a process to own it.
-    try:
-        proc = subprocess.Popen(
+    # the whole process tree.
+    with open(os.path.join(stage_dir, f"client{i}.log"), "w") as logf:
+        return subprocess.Popen(
             cmd,
             stdout=logf,
             stderr=subprocess.STDOUT,
             preexec_fn=preexec,
             start_new_session=True,
         )
-    except BaseException:
-        logf.close()
-        raise
-    return proc, logf
 
 
 def _stop_client(proc, sig):
@@ -222,7 +216,7 @@ def main():
         _assert_fresh_dir(stage_dir)
         procs = []
         rcs = []
-        # Note (Jiaxin Deng): terminate every started client and close its log
+        # Note (Jiaxin Deng): terminate every started client
         # even if a later spawn fails, so a partial stage cannot leak traffic
         # or handles into the next stage.
         # Note (Yueying Li): teardown signals each client's whole session
@@ -238,11 +232,11 @@ def main():
                     )
                 )
             t0 = time.time()
-            for p, _logf in procs:
+            for p in procs:
                 rcs.append(p.wait())
             wall = time.time() - t0
         finally:
-            for p, logf in procs:
+            for p in procs:
                 if p.poll() is None:
                     _stop_client(p, signal.SIGTERM)
                     try:
@@ -250,7 +244,6 @@ def main():
                     except subprocess.TimeoutExpired:
                         _stop_client(p, signal.SIGKILL)
                         p.wait()
-                logf.close()
 
         results, invalid = _collect_stage(stage_dir, n, rcs)
         if invalid:

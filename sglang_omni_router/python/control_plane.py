@@ -166,17 +166,16 @@ def create_control_plane_app(
     )
 
     admission_view: AdmissionAggregateView | None = None
-    admission_shm_file = None
     if admission_shm_path and expected_data_planes:
-        admission_shm_file = open(admission_shm_path, "rb")
-        admission_view = AdmissionAggregateView(
-            mmap.mmap(
-                admission_shm_file.fileno(),
-                admission_file_size(expected_data_planes),
-                access=mmap.ACCESS_READ,
-            ),
-            expected_data_planes,
-        )
+        with open(admission_shm_path, "rb") as admission_shm_file:
+            admission_view = AdmissionAggregateView(
+                mmap.mmap(
+                    admission_shm_file.fileno(),
+                    admission_file_size(expected_data_planes),
+                    access=mmap.ACCESS_READ,
+                ),
+                expected_data_planes,
+            )
 
     # Note (Jiaxin Deng): the CP never relays data traffic, so its pool is
     # sized to the worker count, not to the admission bound.
@@ -274,8 +273,6 @@ def create_control_plane_app(
             except Exception:
                 logger.exception("snapshot keepalive task ended abnormally")
             await health_checker.stop()
-            if admission_shm_file is not None:
-                admission_shm_file.close()
             if owns_health_client and health_client is not client:
                 await health_client.aclose()
             if owns_client:

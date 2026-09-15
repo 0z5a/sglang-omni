@@ -278,7 +278,6 @@ class RouterSupervisor:
         self._cp_rapid_deaths: int = 0
         self._death_pipe_read: int | None = None
         self._death_pipe_write: int | None = None
-        self._admission_file = None
         self._admission_mmap: mmap.mmap | None = None
         self._dp_slots: dict[int, DataPlaneSlot] = {}
         self._stop_requested = False
@@ -392,11 +391,11 @@ class RouterSupervisor:
 
         admission_shm_path = os.path.join(self._workdir, "admission.shm")
         create_admission_file(admission_shm_path, self._router_processes)
-        self._admission_file = open(admission_shm_path, "r+b")
-        self._admission_mmap = mmap.mmap(
-            self._admission_file.fileno(),
-            admission_file_size(self._router_processes),
-        )
+        with open(admission_shm_path, "r+b") as admission_file:
+            self._admission_mmap = mmap.mmap(
+                admission_file.fileno(),
+                admission_file_size(self._router_processes),
+            )
 
         self._context = SupervisorContext(
             config_path=config_path,
@@ -601,12 +600,6 @@ class RouterSupervisor:
             except (OSError, ValueError):
                 pass
             self._admission_mmap = None
-        if self._admission_file is not None:
-            try:
-                self._admission_file.close()
-            except OSError:
-                pass
-            self._admission_file = None
 
     def shutdown(self) -> None:
         # Note (Jiaxin Deng): drop the parent's listener FIRST: once the DPs
