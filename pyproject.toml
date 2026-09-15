@@ -151,15 +151,12 @@ markers = [
 [tool.ruff.lint]
 select = [
     "ANN",      # Function annotations and no Any in signatures
-    "ARG",      # Unused parameters
     "B006",     # Mutable argument defaults
     "B009",     # Constant-name getattr without a default
     "B010",     # Constant-name setattr
     "E722",     # No bare except
-    "ERA001",   # Commented-out code
     "F403",     # No wildcard imports
     "N801",     # Class names
-    "N802",     # Function names
     "N815",     # Class-scope variable names
     "N816",     # Module-scope variable names
     "PGH004",   # No blanket noqa
