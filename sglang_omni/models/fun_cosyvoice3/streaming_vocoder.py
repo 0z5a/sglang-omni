@@ -125,7 +125,6 @@ class FunCosyVoice3StreamingVocoderScheduler(
         return await self.vocoder.decode_payloads(payloads)
 
     def create_stream_state(self, request_id: str) -> CosyVoice3StreamState:
-        del request_id
         return CosyVoice3StreamState(hop_len=self.token_hop_len)
 
     def latch_stream_contract(
@@ -211,7 +210,6 @@ class FunCosyVoice3StreamingVocoderScheduler(
         state: CosyVoice3StreamState,
         codes: torch.Tensor,
     ) -> torch.Tensor:
-        del request_id, state
         chunk = codes.to(dtype=torch.long)
         if chunk.ndim == 2 and chunk.shape[-1] == 1:
             return chunk.reshape(-1).contiguous()
@@ -240,7 +238,6 @@ class FunCosyVoice3StreamingVocoderScheduler(
         state: CosyVoice3StreamState,
         codes: torch.Tensor,
     ) -> None:
-        del request_id
         state.tokens.extend(int(token) for token in codes.tolist())
         if state.ready_since is None and state.next_decode() != "wait":
             ready_since = self.clock()
@@ -391,7 +388,6 @@ class FunCosyVoice3StreamingVocoderScheduler(
         *,
         is_final: bool,
     ) -> torch.Tensor | None:
-        del request_id
         if not is_final:
             if state.next_decode() != "causal_window":
                 return None
@@ -480,7 +476,6 @@ class FunCosyVoice3StreamingVocoderScheduler(
         payload: StagePayload,
         state: CosyVoice3StreamState,
     ) -> torch.Tensor | None:
-        del request_id, state
         pipeline_state = FunCosyVoice3State.from_dict(payload.data)
         if pipeline_state.audio_codes is None:
             codes = torch.zeros(0, dtype=torch.long)
@@ -509,7 +504,6 @@ class FunCosyVoice3StreamingVocoderScheduler(
         payload: StagePayload,
         state: CosyVoice3StreamState,
     ) -> dict[str, Any]:
-        del request_id, state
         final_data: dict[str, Any] = {
             "modality": "audio",
             "sample_rate": self.sample_rate,
@@ -523,7 +517,6 @@ class FunCosyVoice3StreamingVocoderScheduler(
             return final_data
 
     def stream_payload(self, request_id: str, waveform: torch.Tensor) -> dict[str, Any]:
-        del request_id
         return audio_waveform_payload(
             waveform,
             sample_rate=self.sample_rate,
@@ -534,7 +527,6 @@ class FunCosyVoice3StreamingVocoderScheduler(
     def release_stream_resources(
         self, request_id: str, state: CosyVoice3StreamState
     ) -> None:
-        del request_id
         state.tokens.clear()
         state.hift_mel = None
         state.prompt_token = None
