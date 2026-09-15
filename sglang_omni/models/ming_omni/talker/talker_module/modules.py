@@ -318,6 +318,9 @@ class FinalLayerMLP(nn.Module):
         return x
 
 
+FinalLayer_mlp = FinalLayerMLP
+
+
 class ResBlock(nn.Module):
     """
     A residual block that can optionally change the number of channels.
