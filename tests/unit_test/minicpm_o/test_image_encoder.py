@@ -17,13 +17,13 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from transformers import PretrainedConfig
 
 from sglang_omni.models.minicpm_o.components.image_encoder import (
     MiniCPMOImageEncoder,
     _init_sglang_tp,
     _vision_config_object,
 )
-from transformers import PretrainedConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -172,9 +172,10 @@ def test_chunked_resampler_uses_each_chunk_padding_width() -> None:
 
 def _build_remote_encoder(checkpoint: Path, device: torch.device, dtype: torch.dtype):
     """The pre-srt remote-code path this component replaced, as golden."""
-    from sglang_omni.models.weight_loader import load_module
     from transformers import AutoConfig
     from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+    from sglang_omni.models.weight_loader import load_module
 
     model_dir = str(checkpoint)
     config = AutoConfig.from_pretrained(model_dir, trust_remote_code=True)

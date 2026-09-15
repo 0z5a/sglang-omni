@@ -16,6 +16,7 @@ from typing import Any
 
 import torch
 from PIL import Image
+from transformers import AutoProcessor, AutoTokenizer
 
 from sglang_omni.models.minicpm_o.payload_types import MiniCPMOPipelineState
 from sglang_omni.models.weight_loader import resolve_model_path
@@ -28,7 +29,6 @@ from sglang_omni.preprocessing.image import (
     ensure_image_list_async,
 )
 from sglang_omni.proto import StagePayload
-from transformers import AutoProcessor, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 

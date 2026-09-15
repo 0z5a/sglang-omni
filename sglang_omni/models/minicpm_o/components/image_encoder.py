@@ -20,13 +20,13 @@ import logging
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence
+from transformers import AutoConfig, PretrainedConfig
 
 from sglang_omni.models.weight_loader import (
     load_weights_by_prefix,
     resolve_dtype,
     resolve_model_path,
 )
-from transformers import AutoConfig, PretrainedConfig
 
 logger = logging.getLogger(__name__)
 
