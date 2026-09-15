@@ -944,3 +944,26 @@ gate、具名音色必须带 voice 而克隆臂必须不带、workflow 的 rotat
 **对旧结论的更正**:第 7 轮"cohort 间降频、重放前爬频"的猜想不成立,GPC 时钟稳定在 1.98 GHz(p1 1,878 MHz)。第 12 轮外审说"predictor GEMM 2.1 ms 已是地板"没有量 grid:27 个 GEMM 每子步只用 16-96 个 CTA,权重 2.65 GB/帧按 3.35 TB/s 只需 0.79 ms,实测 2.10 ms 即 38% 峰值。第 7 轮 COLD 编译臂作废是单 seed、在 arena 入图与流解耦之前,3 seed 复测后再定。
 
 **排好序的候选**(收益都是算术推演):C1 准入同轮进队(r1 -3.4 ms 均值,r20 -8 到 -14 ms);C2 vocoder 编译 COLD 与 ramp 宽度(r1 -1.5 到 -1.9);C3 自适应 initial_batch_wait(r1 -2.0);C4 predictor 小 M GEMM 全 SM 化(r1 -1.0 到 -1.7,r20 约 -3);C5 predictor glue 融合 + 短上下文 attention;C6 seeded 采样 kernel;C7 双 token prologue 合并;C8 arena 扁平化;C9 修 B4/B8 图的 cudnn 算法(只动产能,r20 vocoder GPU -10 到 -12%)。被否的 8 条(含异步 decode 循环、talker GEMV 带宽、batched emit)与理由见报告第 4 节。下一步 E1(C1 A/B)、E2(C2+C9+C3)、E3(C4 离线微基准)见报告第 5 节。
+
+## 第十九轮(上):E3,predictor 小 M GEMV 微基准,C4 按预注册阈值判 no-go(2026-09-14 PT)
+
+**做了什么**:第十八轮报告的 E3。六个 predictor GEMM 形状(qkv 1024→4096、o_proj 2048→1024 加残差、o_proj_k1024、gate_up 1024→6144、down 3072→1024、project_input / lm_head 1024→2048),M ∈ {1,2,4,8,48},bf16 权重、fp32 累加。Triton 三种内核(寄存器 GEMV、其三维变体、tensor-core split-K dot),每个 (shape, M) 单独自动调优(76-182 个配置),对照 predictor 自己的 cuBLAS 路径(`F.linear` bf16)。计时协议:20 次背靠背调用捕成 CUDA graph,5 次预热后 30 次复放取中位数,40 份权重副本轮转保证每次从 HBM 读。skeptic 换 seed、反转形状顺序、无缓存重调优复跑,105 个格子全部在 ±1.5% 内。脚本与全表在 [qwen3_tts_e3_predictor_gemv/](qwen3_tts_e3_predictor_gemv/)(`gemv_bench.py`、`results.md`),原始产物在 eval-h100 `…/analysis/e3/`。跑在 GPU 1 上,用一次性容器 `sglang-omni-jaxan-2`(已删,map 已清)。
+
+**结果**(验证者复跑版,每调用 us):
+
+| 形状 | M=1 cuBLAS → Triton | M=48 cuBLAS → Triton | 纯流式读下限 | 阈值 |
+|---|---|---|---|---|
+| o_proj 4.19 MB | 5.98 → 4.00(1.49x) | 6.20 → 7.36(慢 19%) | 3.19-3.44 | ≤ 3.0 未达 |
+| lm_head 4.19 MB | 5.04 → 3.71(1.36x) | 5.23 → 5.15 | 3.19-3.43 | ≤ 3.0 未达 |
+| project_input 4.19 MB | 5.18 → 3.86(1.34x) | 5.38 → 5.30 | 3.19-3.42 | ≤ 3.0 未达 |
+| down 6.29 MB | 7.81 → 4.75(1.64x) | 8.21 → 8.40 | 4.07 | 无 |
+| qkv 8.39 MB | 5.79 → 5.15(1.12x) | 6.06 → 6.05 | 4.69 | 无 |
+| gate_up 12.58 MB | 7.16 → 6.48(1.11x) | 7.73 → 7.80 | 5.77-6.01 | ≤ 5.5 未达 |
+
+权重 load 加 `eviction_policy="evict_first"` 再省 4-8%(o_proj M=1 3.69 us),仍高于 3.0。数值通过:Triton 最大绝对误差与 cuBLAS 同量级(bf16 输出舍入主导),fp32/fp64 参考一致,无 NaN。
+
+**判决**:四项阈值三项未达,**C4 按预注册规则划掉**。但要如实记两点:(1) 报告写的 3.0 / 5.5 us 阈值低于同 harness 里任何已测 kernel,包括不做算术的纯流式读(3.19 / 5.77 us),即阈值本身定错了,不是 Triton 做不到;(2) 真实收益是 bucket 1 每帧 GEMM 2.30 → 1.75 ms(省 0.55 ms,加 evict_first 0.61),bucket 48 慢 0.11 ms/帧,除非按形状混合派发(M ≥ 8 回 cuBLAS)才持平。换算到首帧:r1 约 -1.1 ms(两次曝光),r20 约 0。为这个收益引入自定义内核加混合派发,不值;C4 停在这里,除非以后只剩 r1 首帧一个目标再重开(重开要按实测下限重新预注册阈值)。
+
+**skeptic 修正的三句话**:bench 报告说"fused atomic split-K 在 BLOCK_M=64 出确定性错误",实际错的是 BLOCK_M=16(M∈{2,4,8})且 REDUCE=0 的 74 个配置,M=48 全部通过,没有胜出配置用到这条路径,但混合派发不能碰它;down 行的误差对比把带残差的 Triton 和不带残差的 cuBLAS 放在一起,换成同 epilogue 的 cuBLAS 对照后 Triton 更低;"阈值任何 kernel 都不可达"改成"已测的都没达到"。
+
+**教训**:阈值要在同一 harness 里先量流式下限再定,报告第 3 节 C4 的"按数据时间加 1.3 us 固定开销定价"低估了固定开销(实测空 kernel 1.17-1.47 us,流式读 4.19 MB 需 3.19 us,即约 1.9 us 固定 + bytes/3.25 TB/s)。
