@@ -158,7 +158,6 @@ select = [
     "E722",     # No bare except
     "ERA001",   # Commented-out code
     "F403",     # No wildcard imports
-    "I001",     # stdlib / third-party / first-party import groups
     "N801",     # Class names
     "N802",     # Function names
     "N803",     # Parameter names
@@ -167,7 +166,6 @@ select = [
     "PGH004",   # No blanket noqa
     "RUF008",   # Mutable dataclass defaults
     "SIM115",   # Context managers for files (not sockets/CUDA streams)
-    "TD003",    # TODOs need an issue reference
 ]
 
 [tool.setuptools.packages.find]
