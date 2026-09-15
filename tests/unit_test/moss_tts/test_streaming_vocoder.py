@@ -25,10 +25,8 @@ class _FakeAudioTokenizer:
     sample_rate = 24000
 
     class _Model:
-        class Config:
+        class config:
             hop_length = 4
-
-        config = Config
 
     def __init__(self) -> None:
         self.model = self._Model()
