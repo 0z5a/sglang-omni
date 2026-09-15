@@ -425,19 +425,15 @@ class FunCosyVoice3StreamingVocoderScheduler(
                 )
                 pieces.append(delta)
             if state.tokens:
-                leftover = self.run_flow_hift(
-                    state,
-                    token_end=len(state.tokens),
-                    streaming=False,
-                    finalize=True,
+                pieces.append(
+                    self.run_flow_hift(
+                        state,
+                        token_end=len(state.tokens),
+                        streaming=False,
+                        finalize=True,
+                    )
                 )
-            else:
-                leftover = None
-            if leftover is None:
-                candidates = pieces
-            else:
-                candidates = pieces + [leftover]
-            pieces = [piece for piece in candidates if piece.numel() > 0]
+            pieces = [piece for piece in pieces if piece.numel() > 0]
             if not pieces:
                 return None
             else:

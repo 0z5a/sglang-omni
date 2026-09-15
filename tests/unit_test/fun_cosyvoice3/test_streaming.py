@@ -28,7 +28,6 @@ from sglang_omni.models.fun_cosyvoice3.streaming import (
     tokens_needed_for_causal_chunk,
 )
 from sglang_omni.models.fun_cosyvoice3.streaming_vocoder import (
-    LEFTOVER_FLOW_STREAMING,
     CosyVoice3StreamState,
     FunCosyVoice3StreamingVocoderScheduler,
 )
@@ -220,7 +219,6 @@ def test_streaming_vocoder_emits_causal_chunk_then_finalizes_remainder() -> None
     assert _serve(scheduler) == 1
     messages = _drain(scheduler)
     assert [message.type for message in messages] == ["stream", "result"]
-    assert LEFTOVER_FLOW_STREAMING is False
     assert flow.calls[1]["streaming"] is False
     assert flow.calls[1]["finalize"] is True
     assert _waveform(messages[0].data).shape == (6,)
