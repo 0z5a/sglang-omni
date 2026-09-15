@@ -325,14 +325,13 @@ class FunCosyVoice3StreamingVocoderScheduler(
             request_id, _ = participants[0]
             self.complete_stream_request(request_id, self.finish_stream(request_id))
             return {}
-        elif len(participants) > 1:
-            # note (guozhihao-224): B>1 uses packed inference_causal; B=1 keeps
-            # native CosyVoice Flow.inference. Packed singleton-vs-row tests
-            # cover the batch adapter; native hops stay on the official signature.
+        decoded: dict[str, torch.Tensor] = {}
+        if len(participants) > 1:
+            # note (guozhihao-224, chenyang): B>1 uses packed inference_causal;
+            # B=1 keeps native CosyVoice Flow.inference.
             head = participants[0][1]
-            hop = head.hop_len
             token_offset = head.token_offset
-            token_end = token_offset + hop + PRE_LOOKAHEAD_LEN
+            token_end = token_offset + head.hop_len + PRE_LOOKAHEAD_LEN
             items = [
                 FlowBatchInput(
                     token=torch.tensor(
@@ -345,31 +344,20 @@ class FunCosyVoice3StreamingVocoderScheduler(
                 for _, state in participants
             ]
             logger.info(
-                f"Fun-CosyVoice3 causal Flow batch size={len(items)} hop={hop} "
-                f"token_offset={token_offset}"
+                f"Fun-CosyVoice3 causal Flow batch size={len(items)} "
+                f"hop={head.hop_len} token_offset={token_offset}"
             )
             mels = self.vocoder.first_hop_batch(items)
             offset_frames = token_offset * TOKEN_MEL_RATIO
-            decoded: dict[str, torch.Tensor] = {}
             for (request_id, state), mel in zip(participants, mels, strict=True):
-                delta, hift_mel, speech_offset = self.vocoder.hift_delta(
+                delta, state.hift_mel, state.speech_offset = self.vocoder.hift_delta(
                     mel[:, :, offset_frames:],
                     hift_mel=state.hift_mel,
                     speech_offset=state.speech_offset,
                     finalize=False,
                 )
-                state.token_offset += hop
-                state.hop_len = next_stream_hop_len(
-                    state.hop_len,
-                    max_hop_len=self.token_max_hop_len,
-                    disable_growth=self.disable_hop_growth,
-                )
-                state.hift_mel = hift_mel
-                state.speech_offset = speech_offset
                 if delta.numel() > 0:
                     decoded[request_id] = delta
-                else:
-                    continue
         else:
             request_id, state = participants[0]
             delta = self.run_flow_hift(
@@ -378,25 +366,20 @@ class FunCosyVoice3StreamingVocoderScheduler(
                 streaming=True,
                 finalize=False,
             )
+            if delta.numel() > 0:
+                decoded[request_id] = delta
+        now = self.clock()
+        for request_id, state in participants:
             state.token_offset += state.hop_len
             state.hop_len = next_stream_hop_len(
                 state.hop_len,
                 max_hop_len=self.token_max_hop_len,
                 disable_growth=self.disable_hop_growth,
             )
-            if delta.numel() > 0:
-                decoded = {request_id: delta}
-            else:
-                decoded = {}
-        now = self.clock()
-        for request_id, state in participants:
             if request_id in decoded and state.first_emit_at is None:
-                first_emit_at = now
-            else:
-                first_emit_at = state.first_emit_at
-            state.first_emit_at = first_emit_at
+                state.first_emit_at = now
             if state.next_decode() != "wait":
-                state.ready_since = self.clock()
+                state.ready_since = now
             else:
                 state.ready_since = None
         return decoded
