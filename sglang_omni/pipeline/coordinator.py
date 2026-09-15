@@ -35,6 +35,7 @@ from sglang_omni.proto import (
     SubmitMessage,
     is_update_action,
 )
+from sglang_omni.proto.session import SESSION_METADATA_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -358,6 +359,11 @@ class Coordinator(CoordinatorSessions):
 
     async def submit(self, request_id: str, request: OmniRequest | Any) -> Any:
         """Submit a request to the pipeline and wait for completion."""
+        if (
+            isinstance(request, OmniRequest)
+            and SESSION_METADATA_KEY in request.metadata
+        ):
+            raise ValueError("request metadata key 'omni_session' is reserved")
         await self._submit_request(request_id, request)
 
         future = self._completion_futures[request_id]
@@ -373,6 +379,11 @@ class Coordinator(CoordinatorSessions):
         """Submit a request and yield stream events until completion."""
         queue: asyncio.Queue[CompleteMessage | StreamMessage] = asyncio.Queue()
 
+        if (
+            isinstance(request, OmniRequest)
+            and SESSION_METADATA_KEY in request.metadata
+        ):
+            raise ValueError("request metadata key 'omni_session' is reserved")
         try:
             await self._submit_request(request_id, request, stream_queue=queue)
             expected_terminal_stages = self._expected_terminal_stages(request_id)

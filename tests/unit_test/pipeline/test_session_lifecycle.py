@@ -301,3 +301,14 @@ async def test_closing_rejects_input_before_cleanup(tmp_path, monkeypatch, trigg
                 await asyncio.sleep(0.4)
             else:
                 await asyncio.wait_for(coordinator.close_session(ref), 5)
+
+
+@pytest.mark.asyncio
+async def test_public_submit_rejects_session_metadata(tmp_path):
+    async with pipeline(tmp_path) as (coordinator, events, processes):
+        request = OmniRequest(None, metadata={"omni_session": {}})
+        with pytest.raises(ValueError, match="reserved"):
+            await coordinator.submit("rogue", request)
+        with pytest.raises(ValueError, match="reserved"):
+            await anext(coordinator.stream("rogue", request))
+        assert "rogue" not in coordinator._requests
