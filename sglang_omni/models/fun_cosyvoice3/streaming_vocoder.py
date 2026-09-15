@@ -23,9 +23,7 @@ import torch
 from sglang_omni.models.fun_cosyvoice3.payload_types import FunCosyVoice3State
 from sglang_omni.models.fun_cosyvoice3.stages import CosyVoice3Vocoder, FlowBatchInput
 from sglang_omni.models.fun_cosyvoice3.streaming import (
-    LEFTOVER_FLOW_STREAMING,
     PRE_LOOKAHEAD_LEN,
-    SAMPLE_RATE,
     TOKEN_HOP_LEN,
     TOKEN_MAX_HOP_LEN,
     TOKEN_MEL_RATIO,
@@ -42,6 +40,8 @@ from sglang_omni.scheduling.streaming_vocoder import StreamingVocoderBase
 from sglang_omni.utils.audio_payload import audio_waveform_payload
 
 logger = logging.getLogger(__name__)
+
+SAMPLE_RATE = 24000
 
 NextDecode = Literal["causal_window", "leftover", "wait"]
 
@@ -425,13 +425,10 @@ class FunCosyVoice3StreamingVocoderScheduler(
                 )
                 pieces.append(delta)
             if state.tokens:
-                # note (guozhihao-224): leftover keeps finalize=True so HiFT
-                # flushes and pre_lookahead consumes the tail. DiT stays
-                # bidirectional; leftover streaming=True did not win the A/B.
                 leftover = self.run_flow_hift(
                     state,
                     token_end=len(state.tokens),
-                    streaming=LEFTOVER_FLOW_STREAMING,
+                    streaming=False,
                     finalize=True,
                 )
             else:

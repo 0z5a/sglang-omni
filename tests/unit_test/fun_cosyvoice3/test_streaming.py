@@ -17,9 +17,6 @@ from sglang_omni.models.fun_cosyvoice3.request_builders import (
 )
 from sglang_omni.models.fun_cosyvoice3.sglang_model import EOS_ID, VOCAB_SIZE
 from sglang_omni.models.fun_cosyvoice3.streaming import (
-    AR_FOLLOWUP_FLUSH_TOKENS,
-    AR_INITIAL_FLUSH_TOKENS,
-    LEFTOVER_FLOW_STREAMING,
     PRE_LOOKAHEAD_LEN,
     TOKEN_HOP_LEN,
     TOKEN_MEL_RATIO,
@@ -31,12 +28,16 @@ from sglang_omni.models.fun_cosyvoice3.streaming import (
     tokens_needed_for_causal_chunk,
 )
 from sglang_omni.models.fun_cosyvoice3.streaming_vocoder import (
+    LEFTOVER_FLOW_STREAMING,
     CosyVoice3StreamState,
     FunCosyVoice3StreamingVocoderScheduler,
 )
 from sglang_omni.pipeline.stage.stream_queue import StreamItem
 from sglang_omni.proto import OmniRequest, StagePayload
 from sglang_omni.scheduling.messages import IncomingMessage, OutgoingMessage
+
+AR_INITIAL_FLUSH_TOKENS = TOKEN_HOP_LEN + PRE_LOOKAHEAD_LEN
+AR_FOLLOWUP_FLUSH_TOKENS = TOKEN_HOP_LEN
 
 
 def test_stream_hop_math_matches_cosyvoice3() -> None:
