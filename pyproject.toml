@@ -150,20 +150,8 @@ markers = [
 
 [tool.ruff.lint]
 select = [
-    "ANN001",   # Function argument annotations
-    "ANN002",   # *args annotations
-    "ANN003",   # **kwargs annotations
-    "ANN201",   # Public function return annotations
-    "ANN202",   # Private function return annotations
-    "ANN204",   # Special method return annotations
-    "ANN205",   # Static method return annotations
-    "ANN206",   # Class method return annotations
-    "ANN401",   # No Any in function signatures
-    "ARG001",   # Unused function parameters
-    "ARG002",   # Unused method parameters
-    "ARG003",   # Unused class method parameters
-    "ARG004",   # Unused static method parameters
-    "ARG005",   # Unused lambda parameters
+    "ANN",      # Function annotations and no Any in signatures
+    "ARG",      # Unused parameters
     "B006",     # Mutable argument defaults
     "B009",     # Constant-name getattr without a default
     "B010",     # Constant-name setattr
@@ -174,7 +162,6 @@ select = [
     "N801",     # Class names
     "N802",     # Function names
     "N803",     # Parameter names
-    "N806",     # Local variable names
     "N815",     # Class-scope variable names
     "N816",     # Module-scope variable names
     "PGH004",   # No blanket noqa
