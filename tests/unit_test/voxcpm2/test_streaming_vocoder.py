@@ -13,6 +13,26 @@ _DECODE_CHUNK = 3
 _SAMPLES_PER_PATCH = _DECODE_CHUNK * _PATCH_SIZE
 
 
+def test_terminal_result_is_msgpack_serializable():
+    from types import SimpleNamespace
+
+    import msgpack
+
+    from sglang_omni.models.voxcpm2.payload_types import VoxCPM2State
+
+    state = VoxCPM2State(
+        text_token=torch.tensor([1, 2]),
+        generated_latents=torch.zeros(_FEAT_DIM, _PATCH_SIZE * 3),
+        completion_tokens=3,
+    )
+    payload = SimpleNamespace(data=state.to_dict())
+    output = _vocoder()._decode_payload(payload)
+    restored = msgpack.unpackb(msgpack.packb(output.data), raw=False)
+    assert restored["sample_rate"] == 48000
+    assert restored["completion_tokens"] == 3
+    assert len(restored["audio_waveform"]) == 3 * _SAMPLES_PER_PATCH * 4
+
+
 class _FakeAudioVAE:
     """Decodes latents to a ramp so every sample says which frame produced it."""
 

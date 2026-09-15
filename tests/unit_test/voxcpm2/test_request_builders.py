@@ -27,10 +27,15 @@ _TOKEN_IDS = {
 class _FakeTokenizer:
     """Character-per-token stand-in; ids are the character codes."""
 
-    def __call__(self, text):
-        return {"input_ids": [ord(ch) for ch in text]}
+    def get_vocab(self):
+        return {}
+
+    def tokenize(self, text):
+        return list(text)
 
     def convert_tokens_to_ids(self, token):
+        if isinstance(token, list):
+            return [ord(ch) for ch in token]
         return _TOKEN_IDS[token]
 
 
@@ -63,6 +68,41 @@ def _context():
 def _state_for(references):
     payload = _FakePayload(_FakeRequest({"text": "hi", "references": references}))
     return build_voxcpm2_state(payload, _context())
+
+
+@pytest.mark.parametrize("field", ["input", "text"])
+def test_speech_input_and_internal_text_are_accepted(field):
+    payload = _FakePayload(_FakeRequest({field: "hello"}))
+    state = build_voxcpm2_state(payload, _context())
+    assert state.text_token.tolist() == [ord(c) for c in "hello"] + [101]
+
+
+def test_plain_speech_prompt_from_client_is_accepted():
+    from sglang_omni.client.client import Client
+    from sglang_omni.client.types import GenerateRequest
+
+    request = Client._build_omni_request(GenerateRequest(prompt="hello"))
+    state = build_voxcpm2_state(_FakePayload(request), _context())
+    assert state.text_token.tolist() == [ord(c) for c in "hello"] + [101]
+
+
+def test_chinese_word_pieces_are_split_without_adding_bos():
+    class WordTokenizer(_FakeTokenizer):
+        def get_vocab(self):
+            return {"你好": 1000, "你": 1, "好": 2, "world": 3}
+
+        def tokenize(self, text):
+            return ["▁你好", "world"]
+
+        def convert_tokens_to_ids(self, token):
+            if isinstance(token, list):
+                return [self.get_vocab()[piece] for piece in token]
+            return super().convert_tokens_to_ids(token)
+
+    context = VoxCPM2PreprocessingContext(_context().config, WordTokenizer())
+    state = build_voxcpm2_state(_FakePayload(_FakeRequest("你好world")), context)
+    assert state.text_token.tolist() == [1, 2, 3, 101]
+    assert state.target_text_length == 3
 
 
 def test_reference_without_transcript_is_a_timbre_prefix():

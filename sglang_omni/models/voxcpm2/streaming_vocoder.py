@@ -16,8 +16,9 @@ from sglang_omni.models.voxcpm2.payload_types import VoxCPM2State
 from sglang_omni.pipeline.stage.stream_queue import StreamItem
 from sglang_omni.proto import StagePayload
 from sglang_omni.scheduling.messages import OutgoingMessage
-from sglang_omni.scheduling.pipeline_state import load_state, store_state
+from sglang_omni.scheduling.pipeline_state import load_state
 from sglang_omni.scheduling.streaming_simple_scheduler import StreamingSimpleScheduler
+from sglang_omni.utils.audio_payload import audio_waveform_payload
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +132,17 @@ class VoxCPM2StreamingVocoder(StreamingSimpleScheduler):
             latents.to(device=self._device, dtype=torch.float32),
             state.out_sample_rate,
         )
-        state.generated_latents = None
-        state.sample_rate = state.out_sample_rate
-        payload = store_state(payload, state)
-        payload.data["audio"] = audio.squeeze(1).detach().cpu()
+        # Terminal results travel over msgpack, unlike inter-stage tensor
+        # payloads. Emit only serializable waveform bytes and usage metadata.
+        payload.data = audio_waveform_payload(
+            audio, sample_rate=state.out_sample_rate, modality="audio"
+        )
+        payload.data.update(
+            prompt_tokens=state.prompt_tokens,
+            completion_tokens=state.completion_tokens,
+            engine_time_s=state.engine_time_s,
+            finish_reason=state.finish_reason,
+        )
         return payload
 
 

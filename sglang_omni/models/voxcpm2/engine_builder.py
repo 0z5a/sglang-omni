@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from sglang_omni.models.voxcpm2 import constants as C
@@ -36,15 +39,54 @@ class VoxCPM2EngineBuilder(TtsEngineBuilder):
         self._model_runner: Any | None = None
         self._tokenizer: Any | None = None
 
+    def resolve_checkpoint(self, model_path: str) -> str:
+        # The upstream checkpoint has no HF model_type. Keep it immutable and
+        # supply the normalized config through a lightweight directory of links.
+        from sglang_omni.models.voxcpm2.hf_config import VOXCPM2_MODEL_TYPE
+
+        root = Path(super().resolve_checkpoint(model_path)).resolve()
+        raw = json.loads((root / "config.json").read_text())
+        raw["model_type"] = VOXCPM2_MODEL_TYPE
+        raw["architectures"] = [VOXCPM2_MODEL_ARCH_OVERRIDE]
+        self._checkpoint_shim = tempfile.TemporaryDirectory(prefix="voxcpm2-config-")
+        shim = Path(self._checkpoint_shim.name)
+        for source in root.iterdir():
+            if source.name not in ("config.json", ".cache"):
+                (shim / source.name).symlink_to(source)
+        (shim / "config.json").write_text(json.dumps(raw))
+        return str(shim)
+
     def pre_infra_setup(self, checkpoint_dir: str) -> None:
         from transformers import AutoTokenizer
 
-        from sglang_omni.models.voxcpm2.hf_config import register_voxcpm2_hf_config
+        from sglang_omni.models.voxcpm2.hf_config import (
+            load_voxcpm2_config,
+            register_voxcpm2_hf_config,
+        )
 
         register_voxcpm2_hf_config()
+        config = load_voxcpm2_config(checkpoint_dir)
+        self.context_length = config.max_length or int(
+            config.lm["max_position_embeddings"]
+        )
         self._tokenizer = AutoTokenizer.from_pretrained(
             checkpoint_dir, trust_remote_code=True
         )
+
+    def generation_defaults(self, *, dtype: str) -> dict[str, Any]:
+        return {
+            "dtype": dtype,
+            "max_running_requests": self.max_running_requests,
+            "max_queued_requests": 16,
+            "disable_cuda_graph": True,
+            "disable_overlap_schedule": True,
+            "enable_torch_compile": False,
+            "mem_fraction_static": 0.60,
+            "max_prefill_tokens": 8192,
+            "sampling_backend": "pytorch",
+            "attention_backend": "triton",
+            "trust_remote_code": True,
+        }
 
     def setup_model(
         self,
@@ -56,10 +98,7 @@ class VoxCPM2EngineBuilder(TtsEngineBuilder):
         server_args: Any,
     ) -> None:
         del checkpoint_dir, device, gpu_id
-        if not getattr(server_args, "disable_cuda_graph", False):
-            model_worker.model_runner.model.enable_graph_feedback(
-                self.max_running_requests
-            )
+        model_worker.model_runner.model.enable_graph_feedback(self.max_running_requests)
 
     def make_model_runner(self, model_worker: Any, output_proc: Any) -> Any:
         from sglang_omni.models.voxcpm2.model_runner import VoxCPM2ModelRunner

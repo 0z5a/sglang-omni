@@ -8,6 +8,7 @@ import torch
 from pydantic import BaseModel
 
 from sglang_omni.models.voxcpm2.components.local_dit import VoxCPMLocDiT
+from sglang_omni.models.voxcpm2.sampling import VoxCPM2Sampling
 
 
 class CfmConfig(BaseModel):
@@ -50,6 +51,9 @@ class UnifiedCFM(torch.nn.Module):
         sway_sampling_coef: float = 1.0,
         use_cfg_zero_star: bool = True,
     ) -> torch.Tensor:
+        # Also validate direct sampler callers, before consuming RNG or launching
+        # a kernel. The default multi-step arithmetic stays unchanged.
+        VoxCPM2Sampling(n_timesteps, cfg_value, sway_sampling_coef, use_cfg_zero_star)
         batch = mu.shape[0]
         x = (
             torch.randn(

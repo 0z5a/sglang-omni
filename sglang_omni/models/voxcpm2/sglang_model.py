@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from types import SimpleNamespace
 from typing import Any
 
 import torch
@@ -57,13 +58,16 @@ def _stack_config(base: Any, *, num_layers: int) -> Any:
     """Copy an HF config for one stack, neutralizing SGLang's muP depth scaling."""
     config = base.__class__(**base.to_dict()) if hasattr(base, "to_dict") else base
     config.num_hidden_layers = num_layers
+    # Upstream MiniCPM uses SwiGLU without storing hidden_act in config.json.
+    config.hidden_act = getattr(base, "hidden_act", "silu")
     # note (Xinhao Tan): do not restore the checkpoint's scale_depth here.
     # SGLang's MiniCPMDecoderLayer always multiplies each residual branch by
     # scale_depth / sqrt(num_hidden_layers), with no use_mup check, while
     # VoxCPM2 ships use_mup=False and adds the branch unscaled. Setting
     # scale_depth to sqrt(num_hidden_layers) makes that factor exactly 1.0.
     # Passing the real value silently scales every layer by ~0.265 instead.
-    config.scale_depth = math.sqrt(num_layers)
+    if not getattr(base, "use_mup", False):
+        config.scale_depth = math.sqrt(num_layers)
     return config
 
 
@@ -78,6 +82,7 @@ class VoxCPM2SGLangModel(nn.Module):
     _graph_feedback_buffer: torch.Tensor | None = None
     _last_lm_hidden: torch.Tensor | None = None
     _last_residual_hidden: torch.Tensor | None = None
+    prefill_audio_mask: torch.Tensor | None = None
 
     def __init__(self, config: Any, quant_config: Any = None, prefix: str = "") -> None:
         super().__init__()
@@ -118,14 +123,18 @@ class VoxCPM2SGLangModel(nn.Module):
         self.layers = nn.ModuleList(layers)
 
         hidden_size = int(lm_config.hidden_size)
+        self.embed_tokens = nn.Embedding(int(lm_config.vocab_size), hidden_size)
         eps = float(lm_config.rms_norm_eps)
         from sglang.srt.layers.layernorm import RMSNorm
 
         self.base_norm = RMSNorm(hidden_size, eps=eps)
         self.residual_norm = RMSNorm(hidden_size, eps=eps)
 
-        encoder_config = _local_config(lm_config, voxcpm_config["encoder_config"])
-        dit_config = _local_config(lm_config, voxcpm_config["dit_config"])
+        # HF normalizes legacy RoPE fields into rope_parameters. The local
+        # modules consume the original VoxCPM schema, preserved separately.
+        local_lm = SimpleNamespace(**voxcpm_config["lm_config"])
+        encoder_config = _local_config(local_lm, voxcpm_config["encoder_config"])
+        dit_config = _local_config(local_lm, voxcpm_config["dit_config"])
         self.patch_size = int(voxcpm_config["patch_size"])
         self.feat_dim = int(voxcpm_config["feat_dim"])
 
@@ -215,9 +224,19 @@ class VoxCPM2SGLangModel(nn.Module):
             input_embeds = forward_batch.input_embeds
 
         lm_hidden = self.forward_base(input_embeds, positions, forward_batch)
-        lm_hidden = self.projections.quantize(lm_hidden)
+        if forward_batch.forward_mode.is_decode():
+            lm_hidden = self.projections.quantize(lm_hidden)
+            residual_embed = input_embeds
+        else:
+            if self.prefill_audio_mask is None:
+                raise RuntimeError("VoxCPM2 prefill requires an audio-position mask")
+            audio_mask = self.prefill_audio_mask.unsqueeze(-1)
+            lm_hidden = torch.where(
+                audio_mask, self.projections.quantize(lm_hidden), lm_hidden
+            )
+            residual_embed = input_embeds * audio_mask
         residual_hidden = self.forward_residual(
-            self.projections.fuse(lm_hidden, input_embeds), positions, forward_batch
+            self.projections.fuse(lm_hidden, residual_embed), positions, forward_batch
         )
         self._last_lm_hidden = lm_hidden
         self._last_residual_hidden = residual_hidden
@@ -225,9 +244,9 @@ class VoxCPM2SGLangModel(nn.Module):
         # note (Xinhao Tan): VoxCPM2 never samples a token - the runner reads
         # the stashed hidden states and overwrites next_token_ids - so these
         # logits exist only to satisfy the return contract.
-        request_count = int(lm_hidden.shape[0])
+        request_count = int(forward_batch.batch_size)
         return LogitsProcessorOutput(
-            next_token_logits=lm_hidden.new_empty((request_count, 1)),
+            next_token_logits=lm_hidden.new_zeros((request_count, 1)),
             hidden_states=lm_hidden,
         )
 
@@ -250,6 +269,8 @@ class VoxCPM2SGLangModel(nn.Module):
         *,
         inference_timesteps: int,
         cfg_value: float,
+        sway_sampling_coef: float = 1.0,
+        use_cfg_zero_star: bool = True,
         rows: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Sample one latent patch and fold it back into the next step embedding.
@@ -265,6 +286,8 @@ class VoxCPM2SGLangModel(nn.Module):
             patch_size=self.patch_size,
             cond=cond.transpose(1, 2).contiguous(),
             cfg_value=float(cfg_value),
+            sway_sampling_coef=sway_sampling_coef,
+            use_cfg_zero_star=use_cfg_zero_star,
         ).transpose(1, 2)
         embedding = self.projections.enc_to_lm_proj(
             self.feat_encoder(patch.unsqueeze(1))
@@ -289,6 +312,19 @@ class VoxCPM2SGLangModel(nn.Module):
             target = _map_checkpoint_name(name, self.num_base_layers)
             if target is None:
                 continue
+            shard_id = None
+            if target.startswith("layers."):
+                for packed, separate, shard in (
+                    ("qkv_proj", "q_proj", "q"),
+                    ("qkv_proj", "k_proj", "k"),
+                    ("qkv_proj", "v_proj", "v"),
+                    ("gate_up_proj", "gate_proj", 0),
+                    ("gate_up_proj", "up_proj", 1),
+                ):
+                    if f".{separate}." in target:
+                        target = target.replace(f".{separate}.", f".{packed}.")
+                        shard_id = shard
+                        break
             parameter = params.get(target)
             if parameter is None:
                 raise ValueError(
@@ -296,7 +332,10 @@ class VoxCPM2SGLangModel(nn.Module):
                     "which the AR model does not define"
                 )
             loader = getattr(parameter, "weight_loader", default_weight_loader)
-            loader(parameter, tensor)
+            if shard_id is None:
+                loader(parameter, tensor)
+            else:
+                loader(parameter, tensor, shard_id)
             loaded.add(target)
         return loaded
 
@@ -314,6 +353,8 @@ _PROJECTION_PREFIXES = (
 
 def _map_checkpoint_name(name: str, num_base_layers: int) -> str | None:
     """Map a checkpoint parameter onto this model's module tree."""
+    if name == "base_lm.embed_tokens.weight":
+        return "embed_tokens.weight"
     if name.startswith("base_lm.layers."):
         return f"layers.{name.removeprefix('base_lm.layers.')}"
     if name.startswith("residual_lm.layers."):

@@ -10,10 +10,48 @@ from sglang.srt.managers.schedule_batch import FINISH_MATCHED_TOKEN
 
 from sglang_omni.model_runner.base import ModelRunner
 from sglang_omni.models.voxcpm2.request_builders import VoxCPM2SGLangRequestData
+from sglang_omni.models.voxcpm2.sampling import VoxCPM2Sampling
 
 
 class VoxCPM2ModelRunner(ModelRunner):
     """Runs the local DiT after each AR forward and feeds the result back."""
+
+    def before_prefill(
+        self, forward_batch: Any, schedule_batch: Any, requests: list
+    ) -> None:
+        embeddings, audio_masks = [], []
+        parameter = next(self.model.parameters())
+        for request in requests:
+            data = request.data
+            prefill = data.prefill
+            token_ids = prefill.text_token.to(parameter.device, dtype=torch.long)
+            features = prefill.audio_feat.to(parameter.device, dtype=parameter.dtype)
+            text_mask = prefill.text_mask.to(parameter.device).bool()
+            audio_mask = prefill.audio_mask.to(parameter.device).bool()
+            text_embed = self.model.embed_tokens(token_ids)
+            config = self.model.config.lm_config
+            if getattr(config, "use_mup", False):
+                text_embed = text_embed * config.scale_emb
+            feature_embed = self.model.projections.enc_to_lm_proj(
+                self.model.feat_encoder(features.unsqueeze(0)).squeeze(0)
+            )
+            combined = text_embed * text_mask.unsqueeze(
+                -1
+            ) + feature_embed * audio_mask.unsqueeze(-1)
+            span = data.req.extend_range
+            embeddings.append(combined[span.start : span.end])
+            audio_masks.append(audio_mask[span.start : span.end])
+            data.cond = features[-1:].contiguous()
+            if data.state.seed is not None:
+                torch.manual_seed(int(data.state.seed))
+        forward_batch.input_embeds = torch.cat(embeddings)
+        # EagerRunner copies ForwardBatch through dataclasses.replace, which
+        # drops dynamic attributes. Keep this synchronous forward's mask on
+        # the model alongside its existing hidden-state/feedback buffers.
+        self.model.prefill_audio_mask = torch.cat(audio_masks)
+
+    def cleanup_prefill(self, forward_batch, schedule_batch, requests) -> None:
+        self.model.prefill_audio_mask = None
 
     def requested_capture_hidden_mode_prefill(
         self, schedule_batch: Any, requests: list
@@ -63,12 +101,14 @@ class VoxCPM2ModelRunner(ModelRunner):
     ) -> None:
         """Sample one latent patch per request and stage the next step's input."""
         rows_data = [request.data for request in requests]
-        timesteps, cfg_value = _shared_sampling(rows_data)
+        sampling = _shared_sampling(rows_data)
 
         patches, embeddings = self.model.decode_patch(
             self._batch_cond(rows_data),
-            inference_timesteps=timesteps,
-            cfg_value=cfg_value,
+            inference_timesteps=sampling.inference_timesteps,
+            cfg_value=sampling.cfg_value,
+            sway_sampling_coef=sampling.sway_sampling_coef,
+            use_cfg_zero_star=sampling.use_cfg_zero_star,
             rows=rows,
         )
         stop_flags = self.model.stop_flags(rows)
@@ -108,28 +148,8 @@ class VoxCPM2ModelRunner(ModelRunner):
         )
 
 
-def _shared_sampling(rows_data: list[VoxCPM2SGLangRequestData]) -> tuple[int, float]:
-    """One batch runs one sampling recipe; reject a batch that mixes them.
-
-    The DiT samples the whole batch in lockstep, so a differing step count or
-    guidance scale cannot be honored per row. Refusing is the only option that
-    does not silently synthesize some requests with another request's recipe.
-    """
-    first = rows_data[0].state
-    timesteps = int(first.inference_timesteps)
-    cfg_value = float(first.cfg_value)
-    for data in rows_data[1:]:
-        if int(data.state.inference_timesteps) != timesteps:
-            raise ValueError(
-                "VoxCPM2 cannot batch requests with different inference_timesteps: "
-                f"{timesteps} and {data.state.inference_timesteps}"
-            )
-        if float(data.state.cfg_value) != cfg_value:
-            raise ValueError(
-                "VoxCPM2 cannot batch requests with different cfg_value: "
-                f"{cfg_value} and {data.state.cfg_value}"
-            )
-    return timesteps, cfg_value
+def _shared_sampling(rows_data: list[VoxCPM2SGLangRequestData]) -> VoxCPM2Sampling:
+    return VoxCPM2Sampling.for_batch([data.state for data in rows_data])
 
 
 __all__ = ["VoxCPM2ModelRunner"]

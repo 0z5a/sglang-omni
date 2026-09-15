@@ -29,8 +29,10 @@ class VoxCPM2State(DeclarativeStateBase):
 
     patch_size: int = wire(C.PATCH_SIZE, codec="int_or")
     feat_dim: int = wire(C.FEAT_DIM, codec="int_or")
-    inference_timesteps: int = wire(C.DEFAULT_INFERENCE_TIMESTEPS, codec="int_or")
+    inference_timesteps: int = wire(C.DEFAULT_INFERENCE_TIMESTEPS, codec="int")
     cfg_value: float = wire(C.DEFAULT_CFG_VALUE, codec="float")
+    sway_sampling_coef: float = wire(1.0, codec="float")
+    use_cfg_zero_star: bool = wire(True, codec="bool")
     min_len: int = wire(C.DEFAULT_MIN_LEN, codec="int_or")
     max_len: int = wire(C.DEFAULT_MAX_LEN, codec="int_or")
     streaming_prefix_len: int = wire(C.DEFAULT_STREAMING_PREFIX_LEN, codec="int_or")

@@ -12,9 +12,12 @@ import torch
 from sglang_omni.models.voxcpm2 import constants as C
 from sglang_omni.models.voxcpm2.hf_config import VoxCPM2RuntimeConfig
 from sglang_omni.models.voxcpm2.payload_types import VoxCPM2State
+from sglang_omni.models.voxcpm2.sampling import VoxCPM2Sampling
 from sglang_omni.preprocessing.cache_key import hash_bytes
 from sglang_omni.proto import StagePayload
+from sglang_omni.scheduling.messages import OutgoingMessage
 from sglang_omni.scheduling.pipeline_state import load_state, store_state
+from sglang_omni.scheduling.sglang_backend import SGLangARRequestData
 from sglang_omni.utils.audio_payload import audio_data_uri_from_reference
 
 
@@ -22,6 +25,26 @@ from sglang_omni.utils.audio_payload import audio_data_uri_from_reference
 class VoxCPM2PreprocessingContext:
     config: VoxCPM2RuntimeConfig
     tokenizer: Any
+    multichar_chinese_tokens: set[str] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.multichar_chinese_tokens = {
+            token
+            for token in self.tokenizer.get_vocab()
+            if len(token) >= 2 and all("\u4e00" <= char <= "\u9fff" for char in token)
+        }
+
+    def encode_text(self, text: str) -> list[int]:
+        # Match VoxCPM's character-level Chinese input and omit tokenizer-added
+        # BOS/EOS tokens. Mixed-language and non-Chinese pieces stay intact.
+        pieces = []
+        for token in self.tokenizer.tokenize(text):
+            clean = token.replace("▁", "")
+            if clean in self.multichar_chinese_tokens:
+                pieces.extend(clean)
+            else:
+                pieces.append(token)
+        return self.tokenizer.convert_tokens_to_ids(pieces)
 
 
 _CONTEXT: VoxCPM2PreprocessingContext | None = None
@@ -61,12 +84,15 @@ def build_voxcpm2_state(
     payload: StagePayload, context: VoxCPM2PreprocessingContext
 ) -> VoxCPM2State:
     """Build the VoxCPM2 state from an incoming request."""
-    inputs = _dict(payload.request.inputs)
+    raw_inputs = payload.request.inputs
+    inputs = {"text": raw_inputs} if isinstance(raw_inputs, str) else _dict(raw_inputs)
     params = _dict(payload.request.params)
     tts_params = _dict(_dict(payload.request.metadata).get("tts_params"))
     engine_params = _dict(_dict(params.get("stage_params")).get("tts_engine"))
 
-    target_text = str(inputs.get("text") or "").strip()
+    target_text = str(
+        _first(inputs.get("input"), inputs.get("text"), default="")
+    ).strip()
     if not target_text:
         raise ValueError("VoxCPM2 requires nonempty input text")
 
@@ -96,9 +122,10 @@ def build_voxcpm2_state(
     text = prompt_text + target_text if prompt_text else target_text
     tokenizer = context.tokenizer
     audio_start_id = int(tokenizer.convert_tokens_to_ids(C.AUDIO_START_TOKEN))
-    text_ids = list(tokenizer(text)["input_ids"]) + [audio_start_id]
+    text_ids = context.encode_text(text) + [audio_start_id]
 
     config = context.config
+    sampling = VoxCPM2Sampling.from_sources(engine_params, tts_params, params)
     return VoxCPM2State(
         sample_rate=config.sample_rate,
         out_sample_rate=config.out_sample_rate,
@@ -106,25 +133,13 @@ def build_voxcpm2_state(
         prompt_audio=prompt_audio,
         reference_audio=reference_audio,
         text_token=torch.tensor(text_ids, dtype=torch.int32),
-        target_text_length=len(tokenizer(target_text)["input_ids"]),
+        target_text_length=len(context.encode_text(target_text)),
         patch_size=config.patch_size,
         feat_dim=config.feat_dim,
-        inference_timesteps=int(
-            _first(
-                engine_params.get("inference_timesteps"),
-                tts_params.get("inference_timesteps"),
-                params.get("inference_timesteps"),
-                default=C.DEFAULT_INFERENCE_TIMESTEPS,
-            )
-        ),
-        cfg_value=float(
-            _first(
-                engine_params.get("cfg_value"),
-                tts_params.get("cfg_value"),
-                params.get("cfg_value"),
-                default=C.DEFAULT_CFG_VALUE,
-            )
-        ),
+        inference_timesteps=sampling.inference_timesteps,
+        cfg_value=sampling.cfg_value,
+        sway_sampling_coef=sampling.sway_sampling_coef,
+        use_cfg_zero_star=sampling.use_cfg_zero_star,
         min_len=int(_first(engine_params.get("min_len"), default=C.DEFAULT_MIN_LEN)),
         max_len=int(
             _first(
@@ -227,17 +242,14 @@ def build_prefill_inputs(
     )
 
 
-@dataclass
-class VoxCPM2SGLangRequestData:
+@dataclass(kw_only=True)
+class VoxCPM2SGLangRequestData(SGLangARRequestData):
     """Per-request engine data the scheduler hangs off the sglang request."""
 
-    stage_payload: StagePayload
     state: VoxCPM2State
     prefill: VoxCPM2PrefillInputs
-    req: Any = None
     cond: Any = None
     latent_patches: list[Any] = field(default_factory=list)
-    finish_reason: str | None = None
     engine_start_s: float = field(default_factory=time.perf_counter)
 
 
@@ -292,15 +304,27 @@ def build_sglang_voxcpm2_request(
     req._codec_suppress_tokens = None
 
     return VoxCPM2SGLangRequestData(
-        stage_payload=payload, state=state, prefill=prefill, req=req
+        stage_payload=payload,
+        state=state,
+        prefill=prefill,
+        req=req,
+        input_embeds_are_projected=True,
     )
 
 
-def build_stream_output(data: VoxCPM2SGLangRequestData) -> dict[str, Any] | None:
+def build_stream_output(
+    request_id: str, data: VoxCPM2SGLangRequestData, req_output: Any
+) -> list[OutgoingMessage]:
     """One streamed chunk: the patch sampled by the step that just finished."""
-    if not data.latent_patches:
-        return None
-    return {"patch": data.latent_patches[-1]}
+    if not data.state.stream or not data.latent_patches:
+        return []
+    return [
+        OutgoingMessage(
+            request_id=request_id,
+            type="stream",
+            data={"patch": data.latent_patches[-1]},
+        )
+    ]
 
 
 def apply_voxcpm2_result(data: VoxCPM2SGLangRequestData) -> StagePayload:

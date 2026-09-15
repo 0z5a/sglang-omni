@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import torch
 from transformers import AutoTokenizer
@@ -111,6 +112,7 @@ def create_tts_engine_executor(
     min_len: int = C.DEFAULT_MIN_LEN,
     max_len: int = C.DEFAULT_MAX_LEN,
     max_running_requests: int = 1,
+    server_args_overrides: dict[str, Any] | None = None,
 ) -> object:
     del min_len, max_len  # per-request, resolved in the runner from the payload
     from sglang_omni.models.voxcpm2.engine_builder import VoxCPM2EngineBuilder
@@ -125,6 +127,7 @@ def create_tts_engine_executor(
         device=device,
         gpu_id=0 if gpu_id is None else gpu_id,
         dtype=dtype,
+        server_args_overrides=server_args_overrides,
     )
 
 
