@@ -1,7 +1,7 @@
 import math
 import typing as tp
-from collections.abc import Sequence
 from dataclasses import dataclass
+from types import EllipsisType
 from typing import Optional, Union
 
 import numpy as np
@@ -810,7 +810,7 @@ class DAC(BaseModel, CodecMixin):
         encoder_rates: list[int] | None = None,
         latent_dim: int = None,
         decoder_dim: int = 1536,
-        decoder_rates: Sequence[int] = (8, 8, 4, 2),
+        decoder_rates: list[int] | None | EllipsisType = ...,
         quantizer: torch.nn.Module = None,
         sample_rate: int = 44100,
         causal: bool = True,
@@ -822,6 +822,8 @@ class DAC(BaseModel, CodecMixin):
         super().__init__()
         if encoder_rates is None:
             encoder_rates = [2, 4, 8, 8]
+        if decoder_rates is ...:
+            decoder_rates = [8, 8, 4, 2]
         if encoder_transformer_layers is None:
             encoder_transformer_layers = [0, 0, 0, 0]
         if decoder_transformer_layers is None:
