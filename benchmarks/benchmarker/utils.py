@@ -217,13 +217,17 @@ def start_server_from_cmd(
             )
 
             def _tee_stdout(src, sink) -> None:
-                with src, sink:
+                try:
                     for line in iter(src.readline, ""):
                         sink.write(line)
                         sink.flush()
                         sys.stdout.write(line)
                         sys.stdout.flush()
+                finally:
+                    src.close()
+                    sink.close()
 
+            # log_handle ownership is handed to the thread; its finally closes it.
             threading.Thread(
                 target=_tee_stdout,
                 args=(proc.stdout, log_handle),

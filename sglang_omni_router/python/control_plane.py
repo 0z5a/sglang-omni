@@ -18,7 +18,7 @@ import logging
 import mmap
 import os
 import time
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from typing import cast
 
 import httpx
@@ -166,8 +166,10 @@ def create_control_plane_app(
     )
 
     admission_view: AdmissionAggregateView | None = None
+    admission_shm_file = None
     if admission_shm_path and expected_data_planes:
-        with open(admission_shm_path, "rb") as admission_shm_file:
+        with ExitStack() as stack:
+            admission_shm_file = stack.enter_context(open(admission_shm_path, "rb"))
             admission_view = AdmissionAggregateView(
                 mmap.mmap(
                     admission_shm_file.fileno(),
@@ -176,6 +178,7 @@ def create_control_plane_app(
                 ),
                 expected_data_planes,
             )
+            stack.pop_all()
 
     # Note (Jiaxin Deng): the CP never relays data traffic, so its pool is
     # sized to the worker count, not to the admission bound.
@@ -273,6 +276,8 @@ def create_control_plane_app(
             except Exception:
                 logger.exception("snapshot keepalive task ended abnormally")
             await health_checker.stop()
+            if admission_shm_file is not None:
+                admission_shm_file.close()
             if owns_health_client and health_client is not client:
                 await health_client.aclose()
             if owns_client:

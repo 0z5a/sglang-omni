@@ -243,7 +243,8 @@ def _start_server(args: argparse.Namespace, log_path: Path) -> subprocess.Popen:
     print("[server] " + " ".join(command), flush=True)
     print(f"[server] CUDA_VISIBLE_DEVICES={args.cuda_visible_devices}", flush=True)
     print(f"[server] log: {log_path}", flush=True)
-    with open(log_path, "w", buffering=1) as log_file:
+    with ExitStack() as stack:
+        log_file = stack.enter_context(open(log_path, "w", buffering=1))
         process = subprocess.Popen(
             command,
             stdout=log_file,
@@ -253,6 +254,8 @@ def _start_server(args: argparse.Namespace, log_path: Path) -> subprocess.Popen:
             start_new_session=True,
             text=True,
         )
+        process._log_file = log_file  # type: ignore[attr-defined]
+        stack.pop_all()
     if not args.quiet_server_log:
         thread = threading.Thread(
             target=_mirror_server_log,
@@ -584,6 +587,9 @@ def _stop_server(process: subprocess.Popen | None) -> None:
     log_thread = getattr(process, "_log_thread", None)
     if log_thread is not None:
         log_thread.join(timeout=2)
+    log_file = getattr(process, "_log_file", None)
+    if log_file is not None:
+        log_file.close()
 
 
 def _tail(path: Path, n: int = 160) -> None:
