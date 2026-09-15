@@ -17,12 +17,13 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import PretrainedConfig
 
 from sglang_omni.models.minicpm_o.components.image_encoder import (
+    MiniCPMOImageEncoder,
     _init_sglang_tp,
     _vision_config_object,
 )
+from transformers import PretrainedConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -141,12 +142,39 @@ def test_vision_config_object_converts_shim_dict() -> None:
     assert vision_config.patch_size == 14
 
 
+def test_chunked_resampler_uses_each_chunk_padding_width() -> None:
+    encoder = object.__new__(MiniCPMOImageEncoder)
+    torch.nn.Module.__init__(encoder)
+    encoder._device = torch.device("cpu")
+    encoder._dtype = torch.float32
+    encoder.vision_batch_size = 16
+    calls = []
+
+    def run_vpm(pixel_values, patch_attn_mask, tgt_sizes, patch_counts_cpu):
+        del patch_attn_mask, tgt_sizes, patch_counts_cpu
+        return torch.zeros((pixel_values.shape[0], 1032, 4))
+
+    class Resampler:
+        def __call__(self, hidden, tgt_sizes):
+            calls.append((tuple(hidden.shape), tuple(tgt_sizes.shape)))
+            return torch.zeros((hidden.shape[0], 2, 4))
+
+    encoder._run_vpm = run_vpm
+    encoder.resampler = Resampler()
+    tgt_sizes = torch.tensor([[1, 1032]] + [[1, 1020]] * 17, dtype=torch.int32)
+    pixel_values = [torch.zeros((3, 2, 2)) for _ in range(18)]
+
+    result = encoder(pixel_values=pixel_values, tgt_sizes=tgt_sizes)
+
+    assert result["image_embeds"].shape == (36, 4)
+    assert calls == [((16, 1032, 4), (16, 2)), ((2, 1020, 4), (2, 2))]
+
+
 def _build_remote_encoder(checkpoint: Path, device: torch.device, dtype: torch.dtype):
     """The pre-srt remote-code path this component replaced, as golden."""
+    from sglang_omni.models.weight_loader import load_module
     from transformers import AutoConfig
     from transformers.dynamic_module_utils import get_class_from_dynamic_module
-
-    from sglang_omni.models.weight_loader import load_module
 
     model_dir = str(checkpoint)
     config = AutoConfig.from_pretrained(model_dir, trust_remote_code=True)

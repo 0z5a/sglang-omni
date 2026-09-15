@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from sglang_omni.models.minicpm_o.thinker_model_runner import MiniCPMOThinkerModelRunner
+from sglang_omni.scheduling.sglang_backend.output_processor import SGLangOutputProcessor
 
 
 def _runner():
@@ -115,3 +116,27 @@ def test_middle_prefill_chunk_does_not_capture_hidden_or_advance_state():
     assert outputs["middle"].extra == {}
     assert outputs["final"].extra == {}
     assert runner.finalize_skip_rids(scheduler_output) == {"middle"}
+
+
+def test_single_request_prefill_preserves_all_hidden_rows():
+    class ForwardMode:
+        def is_extend(self):
+            return True
+
+    req = SimpleNamespace(extend_range=SimpleNamespace(length=3))
+    scheduler_output = SimpleNamespace(
+        requests=[SimpleNamespace(request_id="req")],
+        batch_data=SimpleNamespace(
+            reqs=[req],
+            forward_mode=ForwardMode(),
+        ),
+    )
+    hidden = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+
+    selected = SGLangOutputProcessor._slice_per_request_tensor(
+        hidden,
+        request_index=0,
+        scheduler_output=scheduler_output,
+    )
+
+    torch.testing.assert_close(selected, hidden)

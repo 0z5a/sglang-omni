@@ -20,13 +20,13 @@ import logging
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence
-from transformers import AutoConfig, PretrainedConfig
 
 from sglang_omni.models.weight_loader import (
     load_weights_by_prefix,
     resolve_dtype,
     resolve_model_path,
 )
+from transformers import AutoConfig, PretrainedConfig
 
 logger = logging.getLogger(__name__)
 
@@ -294,8 +294,14 @@ class MiniCPMOImageEncoder(nn.Module):
             resampled = []
             for start in range(0, B, chunk):
                 end = start + chunk
+                chunk_tgt_sizes = tgt_sizes[start:end]
+                chunk_patch_counts = patch_counts_cpu[start:end]
+                chunk_max_patches = int(chunk_patch_counts.max())
                 resampled.append(
-                    self.resampler(vision_embedding[start:end], tgt_sizes[start:end])
+                    self.resampler(
+                        vision_embedding[start:end, :chunk_max_patches],
+                        chunk_tgt_sizes,
+                    )
                 )
             vision_embedding = torch.cat(resampled, dim=0)
         else:

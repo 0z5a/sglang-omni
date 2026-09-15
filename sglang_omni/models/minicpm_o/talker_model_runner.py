@@ -58,8 +58,9 @@ class MiniCPMOTalkerModelRunner(ModelRunner):
             if end > prompt_len:
                 # Retract replay: re-embed already-generated codec tokens the
                 # same way decode does.
+                fill_ids = req.get_fill_ids()
                 generated = torch.tensor(
-                    req.fill_ids[max(prefix_len, prompt_len) : end],
+                    fill_ids[max(prefix_len, prompt_len) : end],
                     dtype=torch.long,
                     device=self.model.emb_code.weight.device,
                 )

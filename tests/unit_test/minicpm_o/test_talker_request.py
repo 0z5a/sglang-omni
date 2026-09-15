@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for the thinker→talker tts-span slicing."""
 
+from array import array
+from types import SimpleNamespace
+
 import pytest
 import torch
 
 from sglang_omni.models.minicpm_o.payload_types import MiniCPMOPipelineState
 from sglang_omni.models.minicpm_o.request_builders import build_talker_request
+from sglang_omni.models.minicpm_o.talker_model_runner import MiniCPMOTalkerModelRunner
 
 TTS_BOS = 900
 TTS_EOS = 901
@@ -97,3 +101,33 @@ def test_end_clamped_to_captured_hidden():
     out = _build(state)
     # hidden covers full-sequence positions 1..2 only → span clamps to [10].
     assert out["tts_token_ids"].tolist() == [10]
+
+
+def test_talker_replay_uses_req_fill_ids_api() -> None:
+    class Embedding:
+        weight = torch.empty(8, 4)
+
+        def __call__(self, token_ids):
+            return torch.zeros((token_ids.shape[0], 4))
+
+    req = SimpleNamespace(
+        prefix_indices=torch.empty(3, dtype=torch.long),
+        extend_range=SimpleNamespace(length=2),
+        get_fill_ids=lambda: array("q", [1, 2, 3, 4, 5]),
+    )
+    sched_req = SimpleNamespace(
+        data=SimpleNamespace(
+            prefill_input_embeds=torch.zeros((3, 4)),
+            req=req,
+        )
+    )
+    forward_batch = SimpleNamespace(
+        input_ids=torch.zeros(2, dtype=torch.long),
+        replace_embeds=None,
+    )
+    runner = MiniCPMOTalkerModelRunner.__new__(MiniCPMOTalkerModelRunner)
+    runner.model = SimpleNamespace(emb_code=Embedding())
+
+    runner.before_prefill(forward_batch, None, [sched_req])
+
+    assert forward_batch._sglang_omni_prefill_inputs.input_embeds.shape == (2, 4)

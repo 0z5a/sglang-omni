@@ -16,7 +16,6 @@ from typing import Any
 
 import torch
 from PIL import Image
-from transformers import AutoProcessor, AutoTokenizer
 
 from sglang_omni.models.minicpm_o.payload_types import MiniCPMOPipelineState
 from sglang_omni.models.weight_loader import resolve_model_path
@@ -29,6 +28,7 @@ from sglang_omni.preprocessing.image import (
     ensure_image_list_async,
 )
 from sglang_omni.proto import StagePayload
+from transformers import AutoProcessor, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,9 @@ def _first_batch_item(value: Any) -> Any:
 
 def _video_to_images(video: Any) -> list[Image.Image]:
     """Convert one decoded video ``(T, C, H, W)`` tensor to RGB frames."""
-    if isinstance(video, list) and all(isinstance(frame, Image.Image) for frame in video):
+    if isinstance(video, list) and all(
+        isinstance(frame, Image.Image) for frame in video
+    ):
         return [frame.convert("RGB") for frame in video]
 
     frames = video if isinstance(video, torch.Tensor) else torch.as_tensor(video)
@@ -288,9 +290,7 @@ class MiniCPMOPreprocessor:
         }
         image_cache_key = compute_image_cache_key(raw_images)
         video_cache_key = (
-            compute_video_cache_key(raw_videos, **video_kwargs)
-            if raw_videos
-            else None
+            compute_video_cache_key(raw_videos, **video_kwargs) if raw_videos else None
         )
 
         images = await ensure_image_list_async(raw_images)

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import torch
+
 from sglang_omni.models.minicpm_o.components import preprocessor as preprocessor_mod
 from sglang_omni.models.minicpm_o.components.preprocessor import (
     MiniCPMOPreprocessor,

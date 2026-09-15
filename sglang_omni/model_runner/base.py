@@ -868,7 +868,7 @@ class ModelRunner:
         return next_token_ids
 
     def _process_sampling_logits(self, logits_output: Any, requests: list) -> None:
-        del logits_output, requests
+        pass
 
     def _install_sampling_seeds(self, forward_batch: Any, requests: list) -> None:
         """Install per-row ``seed``s onto ``sampling_info`` so SGLang routes to
