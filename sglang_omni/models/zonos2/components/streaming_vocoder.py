@@ -319,7 +319,7 @@ class Zonos2StreamingVocoderScheduler(StreamingVocoderBase[_Zonos2StreamState, N
         return torch.cat(pcms) if len(pcms) > 1 else pcms[0]
 
     def _flush(self, request_id: str, state: _Zonos2StreamState) -> torch.Tensor | None:
-        zstate = Zonos2State.from_dict(self._stream_payloads[request_id].data)
+        zstate = Zonos2State.from_dict(self.stream_payloads[request_id].data)
         # note (Yue Yin): coalescing (stream_emit_chunk_frames>1) or retraction can
         # leave the streamed OLA decoder SHORT of the full aligned length (a held or
         # dropped tail), which truncates the audio (observed: emit=32 drops a stochastic

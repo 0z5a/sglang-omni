@@ -172,7 +172,7 @@ def test_streaming_coalesces_equal_t_requests_into_one_pool_step() -> None:
         slot_pool=pool,
     )
     assert vocoder.can_batch_stream_chunks is True
-    assert vocoder._stream_chunk_batch_max == 4
+    assert vocoder.stream_chunk_batch_max == 4
 
     for request_id in ("a", "b"):
         state = vocoder.create_stream_state(request_id)
@@ -201,7 +201,7 @@ def test_select_step_participants_respects_max_batch_size() -> None:
         stream_slots=8,
         slot_pool=pool,
     )
-    assert vocoder._stream_chunk_batch_max == 2
+    assert vocoder.stream_chunk_batch_max == 2
 
     for request_id in ("a", "b", "c", "d"):
         state = vocoder.create_stream_state(request_id)
@@ -227,7 +227,7 @@ def test_stream_chunk_batch_cap_follows_max_batch_size_not_slots() -> None:
         stream_slots=1,
         slot_pool=_RecordingSlotPool(num_slots=1),
     )
-    assert vocoder._stream_chunk_batch_max == 8
+    assert vocoder.stream_chunk_batch_max == 8
     assert vocoder.stream_slots == 1
 
 
@@ -319,7 +319,7 @@ def test_on_stream_chunk_batch_uses_pool_not_compiled_stream_step() -> None:
     )
     payload_state = vocoder.create_stream_state("req")
     vocoder.stream_states["req"] = payload_state
-    vocoder._stream_payloads["req"] = SimpleNamespace(
+    vocoder.stream_payloads["req"] = SimpleNamespace(
         request_id="req",
         request=SimpleNamespace(params={"stream": True}),
         data={},

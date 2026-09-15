@@ -150,14 +150,14 @@ def _drain_outbox(scheduler: Code2WavScheduler) -> list:
 def test_collector_collects_only_already_queued_chunks() -> None:
     scheduler = _make_batching_scheduler()
     scheduler.inbox.put(_chunk("req-2"))
-    batch = scheduler._collect_stream_chunk_batch(_chunk("req-1"))
+    batch = scheduler.collect_stream_chunk_batch(_chunk("req-1"))
     assert [m.request_id for m in batch] == ["req-1", "req-2"]
 
 
 def test_collector_no_wait_when_nothing_due() -> None:
     scheduler = _make_batching_scheduler()
     assert scheduler._batch_deadline() is None
-    batch = scheduler._collect_stream_chunk_batch(_chunk("req-1"))
+    batch = scheduler.collect_stream_chunk_batch(_chunk("req-1"))
     assert [m.request_id for m in batch] == ["req-1"]
 
 
@@ -165,9 +165,9 @@ def test_collector_pushback_non_chunk() -> None:
     scheduler = _make_batching_scheduler()
     done = IncomingMessage(request_id="req-1", type="stream_done", data=None)
     scheduler.inbox.put(done)
-    batch = scheduler._collect_stream_chunk_batch(_chunk("req-1"))
+    batch = scheduler.collect_stream_chunk_batch(_chunk("req-1"))
     assert [m.request_id for m in batch] == ["req-1"]
-    assert scheduler._pending_messages[0] is done
+    assert scheduler.pending_messages[0] is done
 
 
 def test_scheduler_loop_wakes_at_batch_deadline() -> None:
@@ -378,7 +378,7 @@ def test_bitwise_equivalence() -> None:
     )
     for rid, codes in schedule.items():
         for code in codes:
-            control._handle_stream_chunk(rid, _stream_item(code))
+            control.handle_stream_chunk(rid, _stream_item(code))
 
     batched = _make_batching_scheduler(max_batch_wait_ms=0, batch_floor=2)
     for round_start in range(0, 6, 2):
@@ -453,7 +453,7 @@ def test_step_failure_isolates_participants() -> None:
 def test_step_failure_after_success_keeps_decoded_sub_batches() -> None:
     scheduler = _make_chunk_aligned_scheduler(max_batch_wait_ms=0, batch_floor=2)
     cleaned: list[str] = []
-    scheduler._cleanup_aborted_request = cleaned.append
+    scheduler.cleanup_aborted_request = cleaned.append
 
     real_forward = scheduler._forward_codes
     forwards = 0
@@ -536,7 +536,7 @@ def test_factory_flags_reach_scheduler(monkeypatch) -> None:
         batch_ceiling=4,
     )
     assert scheduler._enable_batching is True
-    assert scheduler._max_batch_wait_s == 0.25
+    assert scheduler.max_batch_wait_s == 0.25
     assert scheduler._batch_floor == 3
     assert scheduler._batch_ceiling == 4
     assert scheduler.can_batch_stream_chunks is True
@@ -933,7 +933,7 @@ def test_chunk_aligned_waveforms_match_serial_reference() -> None:
     )
     for rid, codes in schedule.items():
         for code in codes:
-            control._handle_stream_chunk(rid, _stream_item(code))
+            control.handle_stream_chunk(rid, _stream_item(code))
 
     quantized = _make_chunk_aligned_scheduler(max_batch_wait_ms=0, batch_floor=2)
     _feed_batch(
@@ -1125,7 +1125,7 @@ def test_next_message_ingests_first_chunks_before_other_messages() -> None:
     scheduler.inbox.put(_stream_chunk("req-b", 5))
     scheduler.inbox.put(_stream_chunk("req-b", 6))
 
-    msg = scheduler._next_message()
+    msg = scheduler.next_message()
 
     assert msg is not None and msg.type == "stream_done"
     assert msg.request_id == "req-a"
@@ -1142,7 +1142,7 @@ def test_next_message_keeps_steady_chunks_in_fifo_order() -> None:
     scheduler.inbox.put(_stream_chunk("req-a", 3))
     scheduler.inbox.put(_stream_chunk("req-a", 4))
 
-    msg = scheduler._next_message()
+    msg = scheduler.next_message()
 
     assert msg is not None and msg.type == "stream_done"
     assert len(scheduler.stream_states["req-a"].chunks) == 2
@@ -1155,6 +1155,6 @@ def test_next_message_keeps_steady_chunks_in_fifo_order() -> None:
         return original(items)
 
     scheduler.on_stream_chunk_batch = _recording
-    assert scheduler._next_message() is None
+    assert scheduler.next_message() is None
     assert batches == [2]
     assert scheduler.stream_states["req-a"].emitted == 4

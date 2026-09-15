@@ -2613,8 +2613,8 @@ class Qwen3TTSStreamingVocoderScheduler(
             try:
                 delta = self._commit_decode_plan(state, plan, delta)
             except Exception as exc:
-                self._emit_error(request_id, exc)
-                self._abort_state(request_id)
+                self.emit_error(request_id, exc)
+                self.abort_state(request_id)
                 cleanup_abort = True
             else:
                 state.initial_pending = False
@@ -2630,7 +2630,7 @@ class Qwen3TTSStreamingVocoderScheduler(
                 elif state.final_pending or self.should_decode(state, is_final=False):
                     self._schedule_followup(request_id, state)
         if cleanup_abort:
-            self._cleanup_aborted_request(request_id)
+            self.cleanup_aborted_request(request_id)
 
     def _run_followup_worker(self, index: int = 0) -> None:
         self._worker_ctx.graphs = (
@@ -2797,8 +2797,8 @@ class Qwen3TTSStreamingVocoderScheduler(
             try:
                 delta = self._commit_decode_plan(state, plan, delta)
             except Exception as exc:
-                self._emit_error(request_id, exc)
-                self._abort_state(request_id)
+                self.emit_error(request_id, exc)
+                self.abort_state(request_id)
                 cleanup_abort = True
             else:
                 if not self.is_aborted(request_id):
@@ -2816,7 +2816,7 @@ class Qwen3TTSStreamingVocoderScheduler(
                 else:
                     state.followup_pending = False
         if cleanup_abort:
-            self._cleanup_aborted_request(request_id)
+            self.cleanup_aborted_request(request_id)
 
     def _fail_async_stream(
         self,
@@ -2827,18 +2827,18 @@ class Qwen3TTSStreamingVocoderScheduler(
         cleanup_abort = False
         with self.state_lock:
             if self.stream_states.get(request_id) is state:
-                self._emit_error(request_id, exc)
-                self._abort_state(request_id)
+                self.emit_error(request_id, exc)
+                self.abort_state(request_id)
                 cleanup_abort = True
         if cleanup_abort:
-            self._cleanup_aborted_request(request_id)
+            self.cleanup_aborted_request(request_id)
 
-    def _handle_stream_done(self, request_id: str) -> None:
+    def handle_stream_done(self, request_id: str) -> None:
         with self.state_lock:
-            if request_id not in self._stream_payloads:
-                if request_id in self._completed_non_streaming_request_ids:
+            if request_id not in self.stream_payloads:
+                if request_id in self.completed_non_streaming_request_ids:
                     return
-                self._pending_done.add(request_id)
+                self.pending_done.add(request_id)
                 return
             state = self.get_or_create_stream_state(request_id)
             if (
@@ -2854,14 +2854,14 @@ class Qwen3TTSStreamingVocoderScheduler(
         # threshold flush synchronously below, so that decode and its resolve
         # run under _state_lock. Kept as-is here; moving short finals onto the
         # initial worker is a separate change.
-        super()._handle_stream_done(request_id)
+        super().handle_stream_done(request_id)
 
     def _finish_async_stream(
         self,
         request_id: str,
         state: _Qwen3TTSStreamState,
     ) -> None:
-        payload = self._stream_payloads.get(request_id)
+        payload = self.stream_payloads.get(request_id)
         if payload is None or self.is_aborted(request_id):
             return
         self.outbox.put(
@@ -2876,7 +2876,7 @@ class Qwen3TTSStreamingVocoderScheduler(
             )
         )
         self._record_completed_stream_request_id(request_id)
-        self._clear_request_state(request_id)
+        self.clear_request_state(request_id)
 
     def fallback_full_decode(
         self,

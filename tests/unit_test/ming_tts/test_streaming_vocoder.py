@@ -238,13 +238,13 @@ def _start_external_abort_after_tombstone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> threading.Thread:
     recorded = threading.Event()
-    original = scheduler._record_aborted_request_id
+    original = scheduler.record_aborted_request_id
 
     def record_and_signal(aborted_request_id: str) -> None:
         original(aborted_request_id)
         recorded.set()
 
-    monkeypatch.setattr(scheduler, "_record_aborted_request_id", record_and_signal)
+    monkeypatch.setattr(scheduler, "record_aborted_request_id", record_and_signal)
     thread = threading.Thread(target=scheduler.abort, args=(request_id,), daemon=True)
     thread.start()
     assert recorded.wait(_WAIT_TIMEOUT_S)
@@ -265,7 +265,7 @@ def test_stream_capacity_bounds_chunk_collection_not_full_batching() -> None:
     scheduler.inbox.put(chunk_messages[1])
     scheduler.inbox.put(chunk_messages[2])
 
-    collected_chunks = scheduler._collect_stream_chunk_batch(chunk_messages[0])
+    collected_chunks = scheduler.collect_stream_chunk_batch(chunk_messages[0])
 
     assert collected_chunks == chunk_messages[:2]
     assert scheduler.inbox.get_nowait() == chunk_messages[2]
@@ -280,7 +280,7 @@ def test_stream_capacity_bounds_chunk_collection_not_full_batching() -> None:
     ]
     scheduler.inbox.put(full_messages[1])
 
-    assert scheduler._collect_new_request_batch(full_messages[0]) == full_messages[:1]
+    assert scheduler.collect_new_request_batch(full_messages[0]) == full_messages[:1]
     assert scheduler.inbox.get_nowait() == full_messages[1]
 
 

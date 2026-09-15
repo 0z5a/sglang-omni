@@ -201,9 +201,9 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
             stream_source_hint="Qwen3-Omni code2wav",
         )
         # Note (wenyao): batching fields set after super().__init__ — the base
-        # scheduler assigns its own _max_batch_wait_s and would clobber ours.
+        # scheduler assigns its own max_batch_wait_s and would clobber ours.
         self._enable_batching = bool(enable_batching)
-        self._max_batch_wait_s = max(int(max_batch_wait_ms), 0) / 1000.0
+        self.max_batch_wait_s = max(int(max_batch_wait_ms), 0) / 1000.0
         self._batch_floor = max(int(batch_floor), 1)
         self._initial_codec_chunk_frames = min(
             max(int(initial_codec_chunk_frames), 0), int(stream_chunk_size)
@@ -216,7 +216,7 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
         self._pending_step_failures: list[str] = []
         self.can_batch_stream_chunks = self._enable_batching
         if self._enable_batching:
-            self._stream_chunk_batch_max = self._batch_ceiling
+            self.stream_chunk_batch_max = self._batch_ceiling
         # Note (edwardzh): serial path only — run_step is #1237's and
         # its window shapes are not the ones this pipeline reasons about.
         self._enable_output_overlap = bool(enable_output_overlap)
@@ -364,7 +364,7 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
             threshold_frames=threshold,
             eos_scan_deferred=self._eos_lazy_scan,
             inbox_depth=self.inbox.qsize(),
-            pending_message_depth=len(self._pending_messages),
+            pending_message_depth=len(self.pending_messages),
             active_request_count=len(self.stream_states),
         )
         if first_ingest:
@@ -451,7 +451,7 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
                     for _, ready_state in self.stream_state_items()
                 ),
                 "inbox_depth": self.inbox.qsize(),
-                "pending_message_depth": len(self._pending_messages),
+                "pending_message_depth": len(self.pending_messages),
             }
             _emit_event(
                 request_id=request_id,
@@ -734,7 +734,7 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
             ]
         if not due:
             return None
-        return min(due) + self._max_batch_wait_s
+        return min(due) + self.max_batch_wait_s
 
     def _drain_inbox(self):
         while True:
@@ -743,7 +743,7 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
             except queue.Empty:
                 return
 
-    def _next_message(self):
+    def next_message(self):
         # Note (wenyao): ``Event.query()`` is non-blocking, so reaping on this
         # loop cannot recreate the abort stall it replaces.
         with self.state_lock:
@@ -758,23 +758,23 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
                 ):
                     first_chunks.append(msg)
                 else:
-                    self._pending_messages.append(msg)
+                    self.pending_messages.append(msg)
             if first_chunks:
-                self._handle_stream_chunk_batch(first_chunks)
+                self.handle_stream_chunk_batch(first_chunks)
             if (
-                self._pending_messages
-                and self._pending_messages[0].type == "stream_chunk"
+                self.pending_messages
+                and self.pending_messages[0].type == "stream_chunk"
             ):
                 run: list = []
                 while (
-                    self._pending_messages
-                    and self._pending_messages[0].type == "stream_chunk"
+                    self.pending_messages
+                    and self.pending_messages[0].type == "stream_chunk"
                 ):
-                    run.append(self._pending_messages.popleft())
-                self._handle_stream_chunk_batch(run)
+                    run.append(self.pending_messages.popleft())
+                self.handle_stream_chunk_batch(run)
                 return None
-        if self._pending_messages:
-            return self._pending_messages.popleft()
+        if self.pending_messages:
+            return self.pending_messages.popleft()
         deadline = self._batch_deadline()
         timeout = 0.1
         if deadline is not None:
@@ -790,7 +790,7 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
         with self.state_lock:
             failed = self._pump_streams()
         for request_id in failed:
-            self._cleanup_aborted_request(request_id)
+            self.cleanup_aborted_request(request_id)
 
     def _pump_streams(self) -> list[str]:
         # Note (ruoyu): a step that fails partway aborts inside run_step instead
@@ -955,14 +955,14 @@ class Code2WavScheduler(StreamingVocoderBase[Code2WavStreamState, "list[int]"]):
         oldest_wait = now - anchor[0][1].due_since
         fire = (
             len(anchor) >= self._batch_floor
-            or oldest_wait >= self._max_batch_wait_s
+            or oldest_wait >= self.max_batch_wait_s
             or self._drain_mode
         )
         if not fire:
             return []
         if len(anchor) >= self._batch_floor:
             reason = "floor"
-        elif oldest_wait >= self._max_batch_wait_s:
+        elif oldest_wait >= self.max_batch_wait_s:
             reason = "deadline"
         else:
             reason = "drain"

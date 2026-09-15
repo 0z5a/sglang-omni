@@ -244,7 +244,7 @@ def _force_pipeline(scheduler: Code2WavScheduler, monkeypatch) -> list:
 
 
 def _seed(scheduler: Code2WavScheduler, request_id: str = "req-1") -> None:
-    scheduler._stream_payloads[request_id] = make_qwen_payload(request_id=request_id)
+    scheduler.stream_payloads[request_id] = make_qwen_payload(request_id=request_id)
     scheduler.get_or_create_stream_state(request_id)
 
 
@@ -262,7 +262,7 @@ def _feed(
 ) -> None:
     for i in indices:
         codes = _chunk(i) if chunks is None else chunks[i]
-        scheduler._on_chunk(
+        scheduler.handle_stream_chunk(
             request_id,
             StreamItem(i, codes, "talker", metadata={"stream": stream}),
         )
@@ -295,7 +295,7 @@ def _run_stream(
         _force_pipeline(scheduler, monkeypatch)
     _seed(scheduler)
     _feed(scheduler, "req-1", range(n_chunks), stream=stream)
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
     return _drain_snapshot(scheduler)
 
 
@@ -328,7 +328,7 @@ def test_overlap_protocol_bitwise_matches_sync_with_threshold_eos(monkeypatch) -
             _force_pipeline(scheduler, monkeypatch)
         _seed(scheduler)
         _feed(scheduler, "req-1", range(9))
-        scheduler._on_chunk(
+        scheduler.handle_stream_chunk(
             "req-1",
             StreamItem(
                 9,
@@ -338,7 +338,7 @@ def test_overlap_protocol_bitwise_matches_sync_with_threshold_eos(monkeypatch) -
             ),
         )
         _feed(scheduler, "req-1", range(9, 20))
-        scheduler._on_done("req-1")
+        scheduler.handle_stream_done("req-1")
         return _drain_snapshot(scheduler)
 
     assert _run(overlap=True) == _run(overlap=False)
@@ -365,7 +365,7 @@ def test_overlap_first_window_sync_second_deferred(monkeypatch) -> None:
     assert scheduler.outbox.qsize() == 2  # third launch flushed window 2
     assert stream_devices == [scheduler._device] * 2
 
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
     snapshot = _drain_snapshot(scheduler)
     assert snapshot == control
 
@@ -565,7 +565,7 @@ def test_overlap_rerecord_failure_on_reused_slot_quarantines_it(monkeypatch) -> 
     with pytest.raises(RuntimeError, match="not recorded"):
         slot_a.synchronize()
 
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
     assert scheduler._pinned_free == [slot_b]
     snapshot = _drain_snapshot(scheduler)
     assert [item[1] for item in snapshot] == ["stream"] * 4 + ["result"]
@@ -609,7 +609,7 @@ def test_overlap_flush_synchronizes_before_releasing_slot(monkeypatch) -> None:
 
     monkeypatch.setattr(scheduler, "_release_slot", _release_after_synchronize)
 
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
 
     assert event.synchronize_calls == 1
     assert pending.slot in scheduler._pinned_free
@@ -697,8 +697,8 @@ def test_overlap_pool_exhaustion_falls_back_sync_per_window(monkeypatch) -> None
         _feed(target, "req-a", range(20))  # window 2 pipelined, holds the slot
         _feed(target, "req-b", range(20))  # window 2 finds no slot: sync path
         _feed(target, "req-a", range(20, 30))  # flush-own-pending reuses slot
-        target._on_done("req-a")
-        target._on_done("req-b")
+        target.handle_stream_done("req-a")
+        target.handle_stream_done("req-b")
 
     def _by_request(snapshot: list[tuple]) -> dict[str, list[tuple]]:
         grouped: dict[str, list[tuple]] = {}
@@ -733,14 +733,14 @@ def test_eos_lazy_scan_one_scan_per_window_and_tail_stays_stream_done(
     # Note (edwardzh): raw ready hits the threshold here, so this fails
     # if the scan runs after the gate instead of before it.
     _feed(scheduler, "req-1", range(9))
-    scheduler._on_chunk(
+    scheduler.handle_stream_chunk(
         "req-1",
         StreamItem(9, torch.tensor([2150, 0]), "talker", metadata={"stream": True}),
     )
     assert model.calls == []
     assert scans == [10]
 
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
     assert model.calls == [(1, 2, 9)]
     decode_start = next(
         event for event in events if event["event_name"] == "code2wav_decode_start"
@@ -766,7 +766,7 @@ def test_eos_lazy_scan_batches_one_scan_per_threshold_window(monkeypatch) -> Non
     assert model.calls == [(1, 2, 10), (1, 2, 11), (1, 2, 11)]
     assert scans == [10, 10, 10]
 
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
     # Note (edwardzh): stream-done rescans unconditionally.
     assert scans == [10, 10, 10, 0]
 
@@ -777,7 +777,7 @@ def test_overlap_events_order_and_metadata(monkeypatch) -> None:
     _force_pipeline(scheduler, monkeypatch)
     _seed(scheduler)
     _feed(scheduler, "req-1", range(20))
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
 
     decode_events = [
         event["event_name"]
@@ -886,7 +886,7 @@ def test_overlap_borrowed_output_copied_before_next_replay(monkeypatch) -> None:
     _seed(scheduler)
     _feed(scheduler, "req-1", range(3))
     state = scheduler.stream_states["req-1"]
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
 
     # Note (edwardzh): replay N+1 overwrites the static buffer before
     # window N flushes, so this fails if the copy is not launch-ordered.
@@ -926,7 +926,7 @@ def test_overlap_gpu_real_pinned_event_bitwise(
         )
         _seed(scheduler)
         _feed(scheduler, "req-1", range(n_chunks))
-        scheduler._on_done("req-1")
+        scheduler.handle_stream_done("req-1")
         if cuda_graph:
             runtime = scheduler._cuda_graph_runner.stats()["runtime"]
             assert runtime["graph_replays"] == n_chunks // 10
@@ -954,7 +954,7 @@ def test_overlap_gpu_query_is_false_until_inflight_copy_drains() -> None:
     )
     _seed(control)
     _feed(control, "req-1", range(22), chunks=chunks)
-    control._on_done("req-1")
+    control.handle_stream_done("req-1")
     control_snapshot = _drain_snapshot(control)
 
     scheduler = _make_gpu_scheduler(
@@ -986,7 +986,7 @@ def test_overlap_gpu_query_is_false_until_inflight_copy_drains() -> None:
     assert scheduler._pinned_retired == []
     assert scheduler._pinned_free == [pending.slot]
 
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
     tail = _drain_snapshot(scheduler)
     assert [item[1] for item in tail] == ["stream", "result"]
     assert [*first_window, *second_window, *tail] == control_snapshot
@@ -1005,7 +1005,7 @@ def test_overlap_gpu_abort_midstream_neither_blocks_nor_reuses_inflight_slot(
     control = _make_gpu_scheduler(overlap=False, device=device, cuda_graph=cuda_graph)
     _seed(control)
     _feed(control, "req-1", range(20), chunks=chunks)
-    control._on_done("req-1")
+    control.handle_stream_done("req-1")
     expected_window_2 = np.frombuffer(
         _drain_snapshot(control)[1][2], dtype=np.float32
     ).copy()
@@ -1078,7 +1078,7 @@ def test_overlap_gpu_slot_on_other_device_than_process_current() -> None:
         )
         _seed(control)
         _feed(control, "req-1", range(22), chunks=chunks)
-        control._on_done("req-1")
+        control.handle_stream_done("req-1")
         control_snapshot = _drain_snapshot(control)
 
         # The control's forwards pinned cuda:1.
@@ -1115,7 +1115,7 @@ def test_overlap_gpu_slot_on_other_device_than_process_current() -> None:
         assert [item[1] for item in second_window] == ["stream"]
         assert scheduler._pinned_free == [pending.slot]
 
-        scheduler._on_done("req-1")
+        scheduler.handle_stream_done("req-1")
         tail = _drain_snapshot(scheduler)
         assert [item[1] for item in tail] == ["stream", "result"]
         assert [*first_window, *second_window, *tail] == control_snapshot
@@ -1149,12 +1149,14 @@ def test_stream_done_flushes_tail_before_the_payload_latch() -> None:
     _feed(scheduler, "req-1", range(13))
     assert [item[1] for item in _drain_snapshot(scheduler)] == ["stream"]
 
-    scheduler._on_done("req-1")
-    assert "req-1" in scheduler._pending_done
+    scheduler.handle_stream_done("req-1")
+    assert "req-1" in scheduler.pending_done
     assert [item[1] for item in _drain_snapshot(scheduler)] == ["stream"]
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
     assert _drain_snapshot(scheduler) == []
 
-    scheduler._on_streaming_new_request("req-1", make_qwen_payload(request_id="req-1"))
+    scheduler.handle_streaming_new_request(
+        "req-1", make_qwen_payload(request_id="req-1")
+    )
     assert [item[1] for item in _drain_snapshot(scheduler)] == ["result"]
     assert scheduler.stream_states == {}

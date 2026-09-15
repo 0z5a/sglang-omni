@@ -126,7 +126,7 @@ class MingTTSStreamingVocoderScheduler(
     ) -> None:
         self._decoder = decoder
         self._slot_bindings = _AudioVAEStreamingSlotBindings(decoder)
-        self._stream_chunk_batch_max = decoder.stream_capacity
+        self.stream_chunk_batch_max = decoder.stream_capacity
         self._patch_size = int(patch_size)
         self._latent_dim = int(latent_dim)
         self._initial_chunk_patches = int(initial_chunk_patches)
@@ -149,13 +149,13 @@ class MingTTSStreamingVocoderScheduler(
         self._stop_requested.set()
         super().stop()
 
-    def _next_message(self) -> IncomingMessage | None:
+    def next_message(self) -> IncomingMessage | None:
         if self._stop_requested.is_set():
-            self._running = False
+            self.running = False
             return None
-        msg = super()._next_message()
+        msg = super().next_message()
         if self._stop_requested.is_set():
-            self._running = False
+            self.running = False
             return None
         return msg
 

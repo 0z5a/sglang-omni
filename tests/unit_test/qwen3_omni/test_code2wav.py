@@ -92,7 +92,7 @@ def _seed_stream_state(
     scheduler: Code2WavScheduler,
     request_id: str = "req-1",
 ) -> None:
-    scheduler._stream_payloads[request_id] = make_qwen_payload(request_id=request_id)
+    scheduler.stream_payloads[request_id] = make_qwen_payload(request_id=request_id)
     scheduler.get_or_create_stream_state(request_id)
 
 
@@ -500,7 +500,7 @@ def test_qwen_code2wav_threshold_context_windows_hit_cuda_graph(monkeypatch) -> 
     events = _activate_event_capture(monkeypatch)
 
     for chunk_id in range(40):
-        scheduler._on_chunk(
+        scheduler.handle_stream_chunk(
             "req-1",
             StreamItem(
                 chunk_id,
@@ -547,7 +547,7 @@ def test_qwen_code2wav_stream_done_tail_is_eager_when_shape_matches_graph(
     events = _activate_event_capture(monkeypatch)
 
     for chunk_id in range(11):
-        scheduler._on_chunk(
+        scheduler.handle_stream_chunk(
             "req-1",
             StreamItem(
                 chunk_id,
@@ -556,7 +556,7 @@ def test_qwen_code2wav_stream_done_tail_is_eager_when_shape_matches_graph(
                 metadata={"stream": False},
             ),
         )
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
 
     assert runner.calls == [((1, 2, 6), True), ((1, 2, 10), False)]
     decode_ends = [
@@ -585,7 +585,7 @@ def test_qwen_code2wav_request_events_are_symmetric_and_keep_start_metadata(
     events = _activate_event_capture(monkeypatch)
 
     for chunk_id, codes in enumerate(([1, 10], [2, 20], [3, 30])):
-        scheduler._on_chunk(
+        scheduler.handle_stream_chunk(
             "req-1",
             StreamItem(
                 chunk_id,
@@ -594,7 +594,7 @@ def test_qwen_code2wav_request_events_are_symmetric_and_keep_start_metadata(
                 metadata={"stream": False},
             ),
         )
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
 
     decode_events = [
         event for event in events if event["event_name"].startswith("code2wav_decode_")
@@ -658,7 +658,7 @@ def test_qwen_code2wav_eligible_key_miss_has_json_safe_fallback_metadata(
     events = _activate_event_capture(monkeypatch)
 
     for chunk_id in range(6):
-        scheduler._on_chunk(
+        scheduler.handle_stream_chunk(
             "req-1",
             StreamItem(
                 chunk_id,
@@ -698,7 +698,7 @@ def _run_code2wav_stream(*, cuda_graph: bool) -> tuple[list[tuple], object]:
     )
     _seed_stream_state(scheduler)
     for chunk_id in range(11):
-        scheduler._on_chunk(
+        scheduler.handle_stream_chunk(
             "req-1",
             StreamItem(
                 chunk_id,
@@ -707,7 +707,7 @@ def _run_code2wav_stream(*, cuda_graph: bool) -> tuple[list[tuple], object]:
                 metadata={"stream": True},
             ),
         )
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
 
     messages = [scheduler.outbox.get_nowait() for _ in range(scheduler.outbox.qsize())]
     snapshot: list[tuple] = []
@@ -774,7 +774,7 @@ def test_qwen_code2wav_consumes_borrowed_output_under_state_lock() -> None:
     _seed_stream_state(scheduler)
 
     for chunk_id in range(2):
-        scheduler._on_chunk(
+        scheduler.handle_stream_chunk(
             "req-1",
             StreamItem(
                 chunk_id,
@@ -856,7 +856,7 @@ def _feed(
 ) -> None:
     meta = {"stream": stream}
     for i, code in enumerate(codes):
-        scheduler._handle_stream_chunk(
+        scheduler.handle_stream_chunk(
             request_id,
             StreamItem(i, torch.tensor([code, code * 10]), "talker", metadata=meta),
         )
@@ -866,16 +866,16 @@ def test_qwen_code2wav_streams_incrementally_and_abort_clears_state() -> None:
     """Preserves incremental waveform windows and request-state cleanup on abort."""
     model = FakeCode2WavModel(total_upsample=2)
     scheduler = _make_scheduler(model)
-    scheduler._stream_payloads["req-1"] = make_qwen_payload(request_id="req-1")
+    scheduler.stream_payloads["req-1"] = make_qwen_payload(request_id="req-1")
     _feed(scheduler, "req-1", (1, 2, 3), stream=False)
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
 
     message = scheduler.outbox.get_nowait()
     audio = np.frombuffer(message.data.data["audio_waveform"], dtype=np.float32)
     assert model.calls == [(1, 2, 2), (1, 2, 2)]
     assert audio.shape == (6,)
 
-    scheduler._stream_payloads["req-2"] = make_qwen_payload(request_id="req-2")
+    scheduler.stream_payloads["req-2"] = make_qwen_payload(request_id="req-2")
     scheduler.get_or_create_stream_state("req-2")
     scheduler.abort("req-2")
     assert "req-2" not in scheduler.stream_states
@@ -884,9 +884,9 @@ def test_qwen_code2wav_streams_incrementally_and_abort_clears_state() -> None:
 def test_streaming_client_gets_stream_chunks_and_metadata_final() -> None:
     model = FakeCode2WavModel(total_upsample=2)
     scheduler = _make_scheduler(model)
-    scheduler._stream_payloads["req-1"] = make_qwen_payload(request_id="req-1")
+    scheduler.stream_payloads["req-1"] = make_qwen_payload(request_id="req-1")
     _feed(scheduler, "req-1", (1, 2, 3), stream=True)
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
 
     first = scheduler.outbox.get_nowait()
     assert first.type == "stream"
@@ -907,17 +907,17 @@ def test_streaming_client_gets_stream_chunks_and_metadata_final() -> None:
 def test_eos_chunk_is_skipped_and_never_decoded() -> None:
     model = FakeCode2WavModel(total_upsample=2)
     scheduler = _make_scheduler(model)
-    scheduler._stream_payloads["req-1"] = make_qwen_payload(request_id="req-1")
+    scheduler.stream_payloads["req-1"] = make_qwen_payload(request_id="req-1")
     _feed(scheduler, "req-1", (1, 2), stream=False)
     assert model.calls == [(1, 2, 2)]
 
-    scheduler._handle_stream_chunk(
+    scheduler.handle_stream_chunk(
         "req-1",
         StreamItem(2, torch.tensor([2150, 0]), "talker", metadata={"stream": False}),
     )
     assert model.calls == [(1, 2, 2)]
 
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
     message = scheduler.outbox.get_nowait()
     audio = np.frombuffer(message.data.data["audio_waveform"], dtype=np.float32)
     assert model.calls == [(1, 2, 2)]
@@ -927,9 +927,9 @@ def test_eos_chunk_is_skipped_and_never_decoded() -> None:
 def test_qwen_code2wav_emits_full_chunk_despite_model_output_deficit() -> None:
     model = FakeCode2WavModel(total_upsample=2, output_deficit=1)
     scheduler = _make_scheduler(model)
-    scheduler._stream_payloads["req-1"] = make_qwen_payload(request_id="req-1")
+    scheduler.stream_payloads["req-1"] = make_qwen_payload(request_id="req-1")
     _feed(scheduler, "req-1", (1, 2, 3, 4), stream=True)
-    scheduler._on_done("req-1")
+    scheduler.handle_stream_done("req-1")
 
     first = scheduler.outbox.get_nowait()
     first_audio = np.frombuffer(first.data["audio_waveform"], dtype=np.float32)

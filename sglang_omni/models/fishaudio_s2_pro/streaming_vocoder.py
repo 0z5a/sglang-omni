@@ -314,7 +314,7 @@ class S2ProVocoderScheduler(StreamingSimpleScheduler):
             max_batch_size=max_batch_size,
             max_batch_wait_ms=max_batch_wait_ms,
         )
-        self._payloads = self._stream_payloads
+        self._payloads = self.stream_payloads
 
     def is_streaming_payload(self, payload: StagePayload) -> bool:
         return self._is_streaming_payload(payload)

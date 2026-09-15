@@ -310,7 +310,7 @@ class MossTTSLocalStreamingVocoderScheduler(
     """Decode MOSS-TTS Local codec rows incrementally on the v2 codec."""
 
     can_batch_stream_chunks = True
-    _stream_chunk_batch_distinct_requests = True
+    stream_chunk_batch_distinct_requests = True
 
     def __init__(
         self,
@@ -373,7 +373,7 @@ class MossTTSLocalStreamingVocoderScheduler(
         self._attention_backend = attention_backend
         self._stream_slots = int(stream_slots)
         # Coalesce up to one full set of streaming lanes per pump, not the offline batch width.
-        self._stream_chunk_batch_max = self._stream_slots
+        self.stream_chunk_batch_max = self._stream_slots
         self._stream_chunk_frames = int(stream_chunk_frames)
         self._default_initial_chunk_frames = max(
             0, min(int(initial_chunk_frames), int(stream_chunk_frames))

@@ -139,7 +139,7 @@ class StreamingVocoderBase(
             self._shutdown_stream_states()
 
     def stop(self) -> None:
-        was_running = self._running
+        was_running = self.running
         super().stop()
         if not was_running:
             self._shutdown_stream_states()
@@ -207,22 +207,22 @@ class StreamingVocoderBase(
                 try:
                     self._ingest_stream_item(request_id, item)
                 except Exception as exc:
-                    self._emit_error(request_id, exc)
-                    self._abort_state(request_id)
+                    self.emit_error(request_id, exc)
+                    self.abort_state(request_id)
                     failed.append(request_id)
             if self.pump_on_chunk_batch:
                 failed.extend(self._pump_streams())
         for request_id in failed:
-            self._cleanup_aborted_request(request_id)
+            self.cleanup_aborted_request(request_id)
 
-    def _handle_stream_chunk(self, request_id: str, item: Any) -> None:
+    def handle_stream_chunk(self, request_id: str, item: Any) -> None:
         """Coalescing schedulers route single-chunk deliveries through the
         batch backbone, so the deferred abort cleanup stays off ``state_lock``
         (the inherited path would run ``on_stream_chunk`` with the lock held)."""
         if not self.can_batch_stream_chunks:
-            super()._handle_stream_chunk(request_id, item)
+            super().handle_stream_chunk(request_id, item)
             return
-        item = self._validate_stream_chunk_item(request_id, item)
+        item = self.validate_stream_chunk_item(request_id, item)
         self.on_stream_chunk_batch([(request_id, item)])
 
     def on_stream_done(self, request_id: str) -> list[OutgoingMessage] | None:
@@ -231,7 +231,7 @@ class StreamingVocoderBase(
     def finish_stream(self, request_id: str) -> list[OutgoingMessage]:
         """Flush the remainder (or the nothing-emitted fallback), then build
         the terminal result; records the id as completed."""
-        payload = self._stream_payloads[request_id]
+        payload = self.stream_payloads[request_id]
         state = self.get_or_create_stream_state(request_id)
         if state is None:
             return []
@@ -395,7 +395,7 @@ class StreamingVocoderBase(
         with self.state_lock:
             failed = self._pump_one_step() or []
         for request_id in failed:
-            self._cleanup_aborted_request(request_id)
+            self.cleanup_aborted_request(request_id)
 
     @abstractmethod
     def create_stream_state(self, request_id: str) -> StreamStateT:
@@ -512,7 +512,7 @@ class StreamingVocoderBase(
         """Runs under ``state_lock``: emits the error and clears state for
         every participant, then returns the request ids whose external abort
         callback the caller must run once the lock is released (never invoke
-        ``abort``/``_cleanup_aborted_request`` here — the callback must stay
+        ``abort``/``cleanup_aborted_request`` here — the callback must stay
         off the GPU-serializing lock)."""
         logger.exception(
             "%s streaming decode step failed; aborting %d participating request(s)",
@@ -521,8 +521,8 @@ class StreamingVocoderBase(
         )
         failed: list[str] = []
         for request_id, _ in participants:
-            self._emit_error(request_id, exc)
-            self._abort_state(request_id)
+            self.emit_error(request_id, exc)
+            self.abort_state(request_id)
             failed.append(request_id)
         return failed
 

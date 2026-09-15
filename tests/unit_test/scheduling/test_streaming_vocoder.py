@@ -270,10 +270,10 @@ def test_is_streaming_payload_gate_names_subclass() -> None:
 
 def test_registry_lifecycle_and_hook_call_order() -> None:
     scheduler = _FakeStreamingVocoder(threshold=2)
-    scheduler._on_chunk("r", _item([1]))
+    scheduler.handle_stream_chunk("r", _item([1]))
     assert "r" in scheduler.stream_states
     assert _drain(scheduler) == []
-    scheduler._on_chunk("r", _item([2]))
+    scheduler.handle_stream_chunk("r", _item([2]))
     messages = _drain(scheduler)
     assert scheduler.calls == [
         "create:r",
@@ -297,10 +297,10 @@ def test_registry_lifecycle_and_hook_call_order() -> None:
     np.testing.assert_array_equal(_waveform(messages[0].data), [1.0, 2.0])
 
     scheduler.calls.clear()
-    scheduler._on_done("r")
+    scheduler.handle_stream_done("r")
     assert scheduler.calls == []
     assert _drain(scheduler) == []
-    scheduler._on_streaming_new_request("r", _payload())
+    scheduler.handle_streaming_new_request("r", _payload())
     messages = _drain(scheduler)
     assert scheduler.calls == [
         "latch:r:payload",
@@ -323,11 +323,11 @@ def test_registry_lifecycle_and_hook_call_order() -> None:
 def test_threshold_accumulate_then_flush_on_done() -> None:
     scheduler = _FakeStreamingVocoder(threshold=10)
     for value in (1, 2, 3):
-        scheduler._on_chunk("r", _item([value]))
+        scheduler.handle_stream_chunk("r", _item([value]))
     assert _drain(scheduler) == []
     assert not any(call.startswith("decode:") for call in scheduler.calls)
-    scheduler._on_done("r")
-    scheduler._on_streaming_new_request("r", _payload())
+    scheduler.handle_stream_done("r")
+    scheduler.handle_streaming_new_request("r", _payload())
     messages = _drain(scheduler)
     # note (Gaokai): done sequencing is flush remainder -> final stream chunk ->
     # terminal result; the flush must precede the result in the outbox.
@@ -338,18 +338,18 @@ def test_threshold_accumulate_then_flush_on_done() -> None:
 
 def test_stream_done_before_payload_is_buffered() -> None:
     scheduler = _FakeStreamingVocoder(threshold=10)
-    scheduler._on_chunk("r", _item([7]))
-    scheduler._on_done("r")
-    assert "r" in scheduler._pending_done
+    scheduler.handle_stream_chunk("r", _item([7]))
+    scheduler.handle_stream_done("r")
+    assert "r" in scheduler.pending_done
     assert _drain(scheduler) == []
     assert not any(call.startswith("decode:") for call in scheduler.calls)
-    scheduler._on_streaming_new_request("r", _payload())
+    scheduler.handle_streaming_new_request("r", _payload())
     messages = _drain(scheduler)
     assert [m.type for m in messages] == ["stream", "result"]
     np.testing.assert_array_equal(_waveform(messages[0].data), [7.0])
     assert scheduler.stream_states == {}
     assert scheduler._emitted_stream_ids == set()
-    assert "r" not in scheduler._pending_done
+    assert "r" not in scheduler.pending_done
 
 
 def test_stream_done_before_payload_can_opt_in_to_early_tail() -> None:
@@ -363,17 +363,17 @@ def test_stream_done_before_payload_can_opt_in_to_early_tail() -> None:
             return [self._stream_chunk_message(request_id, waveform)]
 
     scheduler = EarlyTailVocoder(threshold=10)
-    scheduler._on_chunk("r", _item([7]))
-    scheduler._on_done("r")
-    assert "r" in scheduler._pending_done
+    scheduler.handle_stream_chunk("r", _item([7]))
+    scheduler.handle_stream_done("r")
+    assert "r" in scheduler.pending_done
     messages = _drain(scheduler)
     assert [message.type for message in messages] == ["stream"]
     np.testing.assert_array_equal(_waveform(messages[0].data), [7.0])
     assert "final:r" not in scheduler.calls
-    scheduler._on_done("r")
+    scheduler.handle_stream_done("r")
     assert _drain(scheduler) == []
 
-    scheduler._on_streaming_new_request("r", _payload())
+    scheduler.handle_streaming_new_request("r", _payload())
     messages = _drain(scheduler)
     assert [message.type for message in messages] == ["result"]
     assert messages[0].data.data == {
@@ -384,13 +384,13 @@ def test_stream_done_before_payload_can_opt_in_to_early_tail() -> None:
     assert "fallback:r" not in scheduler.calls
     assert scheduler.stream_states == {}
     assert scheduler._emitted_stream_ids == set()
-    assert "r" not in scheduler._pending_done
+    assert "r" not in scheduler.pending_done
 
 
 def test_nothing_emitted_fallback_decodes_whole_utterance() -> None:
     scheduler = _FakeStreamingVocoder(fallback=torch.tensor([9.0, 9.0]))
-    scheduler._on_done("r")
-    scheduler._on_streaming_new_request("r", _payload())
+    scheduler.handle_stream_done("r")
+    scheduler.handle_streaming_new_request("r", _payload())
     messages = _drain(scheduler)
     assert "fallback:r" in scheduler.calls
     assert [m.type for m in messages] == ["stream", "result"]
@@ -399,8 +399,8 @@ def test_nothing_emitted_fallback_decodes_whole_utterance() -> None:
 
 def test_nothing_emitted_fallback_none_keeps_terminal_result_only() -> None:
     scheduler = _FakeStreamingVocoder(fallback=None)
-    scheduler._on_done("r")
-    scheduler._on_streaming_new_request("r", _payload())
+    scheduler.handle_stream_done("r")
+    scheduler.handle_streaming_new_request("r", _payload())
     messages = _drain(scheduler)
     assert "fallback:r" in scheduler.calls
     assert [m.type for m in messages] == ["result"]
@@ -408,9 +408,9 @@ def test_nothing_emitted_fallback_none_keeps_terminal_result_only() -> None:
 
 def test_fallback_skipped_when_stream_emitted() -> None:
     scheduler = _FakeStreamingVocoder(threshold=1, fallback=torch.tensor([9.0]))
-    scheduler._on_chunk("r", _item([1]))
-    scheduler._on_done("r")
-    scheduler._on_streaming_new_request("r", _payload())
+    scheduler.handle_stream_chunk("r", _item([1]))
+    scheduler.handle_stream_done("r")
+    scheduler.handle_streaming_new_request("r", _payload())
     messages = _drain(scheduler)
     assert "fallback:r" not in scheduler.calls
     assert [m.type for m in messages] == ["stream", "result"]
@@ -418,7 +418,7 @@ def test_fallback_skipped_when_stream_emitted() -> None:
 
 def test_abort_releases_resources_and_late_chunks_never_recreate_state() -> None:
     scheduler = _FakeStreamingVocoder(threshold=10)
-    scheduler._on_chunk("r", _item([1]))
+    scheduler.handle_stream_chunk("r", _item([1]))
     state = scheduler.stream_states["r"]
     scheduler.abort("r")
     assert "release:r" in scheduler.calls
@@ -427,7 +427,7 @@ def test_abort_releases_resources_and_late_chunks_never_recreate_state() -> None
     assert scheduler.is_aborted("r")
 
     scheduler.calls.clear()
-    scheduler._on_chunk("r", _item([2]))
+    scheduler.handle_stream_chunk("r", _item([2]))
     assert scheduler.calls == []
     assert scheduler.stream_states == {}
     assert _drain(scheduler) == []
@@ -435,22 +435,22 @@ def test_abort_releases_resources_and_late_chunks_never_recreate_state() -> None
 
 def test_late_chunk_after_completed_stream_never_recreates_state() -> None:
     scheduler = _FakeStreamingVocoder(threshold=1)
-    scheduler._on_streaming_new_request("r", _payload())
-    scheduler._on_chunk("r", _item([1]))
-    scheduler._on_done("r")
+    scheduler.handle_streaming_new_request("r", _payload())
+    scheduler.handle_stream_chunk("r", _item([1]))
+    scheduler.handle_stream_done("r")
     assert [m.type for m in _drain(scheduler)] == ["stream", "result"]
     assert scheduler.stream_states == {}
 
     scheduler.calls.clear()
-    scheduler._on_chunk("r", _item([2]))
+    scheduler.handle_stream_chunk("r", _item([2]))
     assert scheduler.calls == []
     assert scheduler.stream_states == {}
     assert _drain(scheduler) == []
 
     # note (Gaokai): a fresh new_request may reuse the id; only late chunks
     # without a new_request stay dropped.
-    scheduler._on_streaming_new_request("r", _payload())
-    scheduler._on_chunk("r", _item([3]))
+    scheduler.handle_streaming_new_request("r", _payload())
+    scheduler.handle_stream_chunk("r", _item([3]))
     assert "r" in scheduler.stream_states
 
 
@@ -467,7 +467,7 @@ def test_completed_stream_ids_evict_oldest_first(
 
 def test_contract_latch_is_immutable_per_request() -> None:
     scheduler = _FakeStreamingVocoder(threshold=10)
-    scheduler._on_chunk("r", _item([1], {"stream": True, "n_vq": 4}))
+    scheduler.handle_stream_chunk("r", _item([1], {"stream": True, "n_vq": 4}))
     assert scheduler.stream_states["r"].n_vq == 4
     with pytest.raises(ValueError, match="n_vq changed"):
         scheduler.on_stream_chunk("r", _item([2], {"stream": True, "n_vq": 8}))
@@ -475,7 +475,7 @@ def test_contract_latch_is_immutable_per_request() -> None:
     # not have been buffered.
     assert len(scheduler.stream_states["r"].frames) == 1
     # note (Gaokai): re-latching the identical contract must stay legal.
-    scheduler._on_chunk("r", _item([3], {"stream": True, "n_vq": 4}))
+    scheduler.handle_stream_chunk("r", _item([3], {"stream": True, "n_vq": 4}))
     assert scheduler.stream_states["r"].n_vq == 4
     assert len(scheduler.stream_states["r"].frames) == 2
 
@@ -582,8 +582,8 @@ def test_step_omitting_a_participant_keeps_nothing_emitted_fallback() -> None:
     assert scheduler._stream_has_emitted("a")
     assert not scheduler._stream_has_emitted("b")
 
-    scheduler._on_done("b")
-    scheduler._on_streaming_new_request("b", _payload("b"))
+    scheduler.handle_stream_done("b")
+    scheduler.handle_streaming_new_request("b", _payload("b"))
     messages = _drain(scheduler)
     assert "fallback:b" in scheduler.calls
     assert [m.type for m in messages] == ["stream", "result"]
@@ -592,7 +592,7 @@ def test_step_omitting_a_participant_keeps_nothing_emitted_fallback() -> None:
 
 def test_coalescing_single_chunk_path_pumps_same_backbone() -> None:
     scheduler = _CoalescingFakeVocoder(threshold=1)
-    scheduler._on_chunk("a", _item([5]))
+    scheduler.handle_stream_chunk("a", _item([5]))
     messages = _drain(scheduler)
     assert [c for c in scheduler.calls if c in ("select", "plan", "step")] == [
         "select",
@@ -695,8 +695,8 @@ def test_direct_chunk_entry_rejected_for_coalescing_schedulers() -> None:
 
 def test_stop_releases_live_streams_then_calls_serving_stop_hook() -> None:
     scheduler = _FakeStreamingVocoder(threshold=10)
-    scheduler._on_chunk("a", _item([1]))
-    scheduler._on_chunk("b", _item([2]))
+    scheduler.handle_stream_chunk("a", _item([1]))
+    scheduler.handle_stream_chunk("b", _item([2]))
     states = dict(scheduler.stream_states)
     scheduler.stop()
     assert scheduler.stream_states == {}
@@ -715,8 +715,8 @@ def test_stop_release_failure_still_tears_down_session() -> None:
                 raise RuntimeError("release exploded")
 
     scheduler = _ExplodingVocoder(threshold=10)
-    scheduler._on_chunk("a", _item([1]))
-    scheduler._on_chunk("b", _item([2]))
+    scheduler.handle_stream_chunk("a", _item([1]))
+    scheduler.handle_stream_chunk("b", _item([2]))
     scheduler.stop()
     assert scheduler.stream_states == {}
     assert scheduler.calls[-3:] == ["release:a", "release:b", "serving_stop"]
