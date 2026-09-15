@@ -625,9 +625,7 @@ def test_higgs_preprocessing_prunes_preencoded_reference_inputs(monkeypatch) -> 
             return [len(text), num_ref_tokens, len(reference_text or "")]
 
     monkeypatch.setattr(stages, "HiggsTokenizerAdapter", FakeAdapter)
-    preprocess = stages.create_preprocessing_executor(
-        "ckpt", num_codebooks=2
-    ).compute_fn
+    preprocess = stages.create_preprocessing_executor("ckpt", num_codebooks=2)._fn
     payload = StagePayload(
         request_id="preencoded",
         request=OmniRequest(
@@ -670,9 +668,7 @@ def test_higgs_preprocessing_prunes_raw_reference_inputs(monkeypatch) -> None:
         lambda _reference_audio: (np.zeros(16, dtype=np.float32), 24000),
     )
 
-    preprocess = stages.create_preprocessing_executor(
-        "ckpt", num_codebooks=2
-    ).compute_fn
+    preprocess = stages.create_preprocessing_executor("ckpt", num_codebooks=2)._fn
     payload = StagePayload(
         request_id="raw-audio",
         request=OmniRequest(
@@ -747,7 +743,7 @@ def test_higgs_audio_encoder_uses_reference_code_cache(monkeypatch) -> None:
     )
     # Ignore the construction-time codec warm-up call added by #612.
     fake_codec.calls = 0
-    encode = scheduler.compute_fn
+    encode = scheduler._fn
 
     def make_payload(request_id: str) -> StagePayload:
         state = HiggsTtsState(
@@ -823,7 +819,7 @@ def test_higgs_audio_encoder_uses_shared_cache_for_uploaded_voice(
         num_codebooks=2,
     )
     fake_codec.calls = 0
-    encode = scheduler.compute_fn
+    encode = scheduler._fn
 
     def make_payload(
         request_id: str,
@@ -909,7 +905,7 @@ def test_higgs_preprocessing_uses_waveform_cache(monkeypatch, tmp_path) -> None:
     )
 
     scheduler = stages.create_preprocessing_executor("ckpt", num_codebooks=2)
-    preprocess = scheduler.compute_fn
+    preprocess = scheduler._fn
     ref_audio = tmp_path / "ref.wav"
     ref_audio.write_bytes(b"fake wav bytes")
 
@@ -958,7 +954,7 @@ def test_higgs_preprocessing_url_refs_use_decoded_content_key(monkeypatch) -> No
     monkeypatch.setattr(stages, "load_audio_to_24k", fake_load_audio_to_24k)
 
     scheduler = stages.create_preprocessing_executor("ckpt", num_codebooks=2)
-    preprocess = scheduler.compute_fn
+    preprocess = scheduler._fn
 
     def make_payload(request_id: str, url: str) -> StagePayload:
         return StagePayload(

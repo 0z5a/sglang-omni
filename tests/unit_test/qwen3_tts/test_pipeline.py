@@ -5908,10 +5908,10 @@ def test_qwen3_tts_ar_scheduler_abort_cleans_prepared_state() -> None:
             qwen3_request_builders._PREPARED_REQUESTS[request_id] = object()
 
         scheduler = object.__new__(OmniScheduler)
-        scheduler.abort_callback = (
+        scheduler._abort_callback = (
             qwen3_request_builders.cleanup_prepared_qwen3_tts_request
         )
-        scheduler.aborted_request_ids = set()
+        scheduler._aborted_request_ids = set()
         scheduler._aborted_request_id_order = deque()
         scheduler._pending_stream_ingress = {}
         scheduler._deferred_request_payloads = {}
