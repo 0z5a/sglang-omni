@@ -160,7 +160,6 @@ select = [
     "F403",     # No wildcard imports
     "N801",     # Class names
     "N802",     # Function names
-    "N803",     # Parameter names
     "N815",     # Class-scope variable names
     "N816",     # Module-scope variable names
     "PGH004",   # No blanket noqa
