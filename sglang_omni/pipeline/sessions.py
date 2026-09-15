@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import secrets
 import uuid
 from collections import deque
@@ -169,6 +170,12 @@ class CoordinatorSessions:
             raise ValueError("input seq must be contiguous within an incarnation")
         if chunk.modality in session.eos:
             raise ValueError("input after EOS")
+        if (
+            not math.isfinite(chunk.t_start_ms)
+            or not math.isfinite(chunk.duration_ms)
+            or chunk.duration_ms < 0
+        ):
+            raise ValueError("input timing must be finite with a non-negative duration")
         if chunk.t_start_ms < session.ends.get(chunk.modality, 0):
             raise ValueError("input timing overlaps or moves backwards")
         if isinstance(chunk.payload, bytes):
