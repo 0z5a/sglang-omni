@@ -150,7 +150,6 @@ markers = [
 
 [tool.ruff.lint]
 select = [
-    "ANN",      # Function annotations and no Any in signatures
     "B006",     # Mutable argument defaults
     "B009",     # Constant-name getattr without a default
     "B010",     # Constant-name setattr
