@@ -328,21 +328,27 @@ class CoordinatorSessions:
 
         if chunk is not None:
             self._session_stream_handlers[request_id] = output
+
+        async def run() -> dict[str, Any]:
+            await self._submit_request(
+                request_id,
+                request,
+                target_stage=owner,
+                terminal_stages=(
+                    {self._replica_topology.logical_name(owner)}
+                    if owner
+                    else {self._replica_topology.logical_name(session.stages[-1])}
+                ),
+                replica_bindings=session.bindings,
+                bypass_admission=op in {"abort", "close"},
+            )
+            return await self._completion_futures[request_id]
+
         try:
-            async with asyncio.timeout(session.limits.command_timeout_s):
-                await self._submit_request(
-                    request_id,
-                    request,
-                    target_stage=owner,
-                    terminal_stages=(
-                        {self._replica_topology.logical_name(owner)}
-                        if owner
-                        else {self._replica_topology.logical_name(session.stages[-1])}
-                    ),
-                    replica_bindings=session.bindings,
-                    bypass_admission=op in {"abort", "close"},
-                )
-                return await self._completion_futures[request_id]
+            return await asyncio.wait_for(run(), session.limits.command_timeout_s)
+        except asyncio.TimeoutError as exc:
+            self._begin_session_close(session)
+            raise TimeoutError(f"session {op} timed out") from exc
         except BaseException:
             # Note (Junnan Li): Request abort can yield before the pump sees this fatal failure.
             self._begin_session_close(session)
