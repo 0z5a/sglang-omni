@@ -148,6 +148,76 @@ markers = [
     "accelerator: requires accelerator hardware",
 ]
 
+# Style guide: https://github.com/zhaochenyang20/sglang-diffusion-routing/issues/32
+# Includes the follow-up comments; rule names describe the enforceable subset.
+[tool.ruff]
+target-version = "py310"
+required-version = "==0.15.9"
+extend-exclude = [".claude/skills", "*.ipynb"]
+force-exclude = true
+
+[tool.ruff.lint]
+# PLR1702 needs preview; keep other preview-only rules opt-in.
+preview = true
+explicit-preview-rules = true
+select = [
+    "E4",       # Import placement and multiple imports
+    "E7",       # Statements, including bare except
+    "E9",       # Syntax errors
+    "F",        # Undefined/unused names and wildcard imports
+    "ANN",      # Function parameter and return annotations
+    "ARG",      # Unused parameters (does not detect del-parameter workarounds)
+    "B006",     # Mutable argument defaults
+    "B009",     # Constant-name getattr without a default
+    "B010",     # Constant-name setattr
+    "BLE001",   # Broad exceptions without logging or re-raising
+    "ERA001",   # Commented-out code
+    "I001",     # stdlib / third-party / first-party import groups
+    "N801",     # Class names
+    "N802",     # Function names
+    "N803",     # Parameter names
+    "N806",     # Local variable names
+    "N815",     # Class-scope variable names
+    "N816",     # Module-scope variable names
+    "PGH004",   # No blanket noqa
+    "PLC0415",  # Module-level imports; justified lazy imports need a noqa
+    "PLR1702",  # At most three nested blocks
+    "PLR2004",  # Magic numbers in comparisons only
+    "RET502",   # Explicit None when a function also returns values
+    "RET503",   # No implicit fall-through when a function returns values
+    "RUF008",   # Mutable dataclass defaults
+    "SIM115",   # Context managers for files (not sockets/CUDA streams)
+    "T100",     # Debugger calls
+    "TD003",    # TODOs need an issue reference
+    "TID251",   # Banned Any imports and sys.path mutations below
+    "TID252",   # Absolute package imports
+    "UP006",    # Builtin generics, e.g. list[str]
+    "UP007",    # X | Y unions
+    "UP045",    # X | None instead of Optional[X]
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sglang_omni", "sglang_omni_router"]
+
+[tool.ruff.lint.pylint]
+max-nested-blocks = 3
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.Any".msg = "Use a concrete type instead of bypassing type checking with Any."
+"typing_extensions.Any".msg = "Use a concrete type instead of bypassing type checking with Any."
+"sys.path.insert".msg = "Use package imports or configure PYTHONPATH instead of mutating sys.path."
+"sys.path.append".msg = "Use package imports or configure PYTHONPATH instead of mutating sys.path."
+"sys.path.extend".msg = "Use package imports or configure PYTHONPATH instead of mutating sys.path."
+
+# Ruff cannot enforce physical file/function length, complete assignment branches,
+# semantic naming, comment language/reasons, or thread/GPU/purity contracts.
+# B009/B010 do not ban hasattr, computed attribute names, or getattr fallbacks.
+# Bare container/any annotations need a type checker. RET505-RET508 would remove
+# explicit else branches requested by the guide, so they are not enabled.
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = [
