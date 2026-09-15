@@ -11,6 +11,7 @@ the next step (or the stream-done flush) is when they become audio.
 
 from __future__ import annotations
 
+import heapq
 import logging
 import time
 from collections.abc import Callable
@@ -279,34 +280,33 @@ class FunCosyVoice3StreamingVocoderScheduler(
         for request_id, state in self.stream_state_items():
             if state.next_decode() == "wait" or self.is_aborted(request_id):
                 continue
-            # note (ratish): a stream that has not emitted yet has nothing to
-            # play, so it is as urgent as a stream whose buffer just ran out
-            if state.first_emit_at is None:
-                playback_slack = 0.0
             else:
-                playback_slack = state.speech_offset / self.sample_rate - (
-                    now - state.first_emit_at
-                )
-            assert state.ready_since is not None
-            ready.append((playback_slack, state.ready_since, request_id, state))
-        ready.sort()
+                if state.first_emit_at is None:
+                    playback_slack = 0.0
+                else:
+                    playback_slack = state.speech_offset / self.sample_rate - (
+                        now - state.first_emit_at
+                    )
+                assert state.ready_since is not None
+                ready.append((playback_slack, state.ready_since, request_id, state))
         if not ready:
             return []
         else:
-            _, _, head_id, head = ready[0]
-            # note (ratish): least playback slack first; same token window joins
-            # so equal-shape causal Flow calls share one packed inference
+            _, _, head_id, head = min(ready)
             if head.next_decode() == "leftover":
                 return [(head_id, head)]
             else:
-                token_window = (head.token_offset, head.hop_len)
+                token_offset = head.token_offset
+                hop_len = head.hop_len
                 peers = [
-                    (request_id, state)
-                    for _, _, request_id, state in ready
+                    (playback_slack, ready_since, request_id, state)
+                    for playback_slack, ready_since, request_id, state in ready
                     if state.next_decode() == "causal_window"
-                    and (state.token_offset, state.hop_len) == token_window
+                    and state.token_offset == token_offset
+                    and state.hop_len == hop_len
                 ]
-                return peers[: self.max_batch_size]
+                selected = heapq.nsmallest(self.max_batch_size, peers)
+                return [(request_id, state) for _, _, request_id, state in selected]
 
     def build_step_plan(
         self, participants: list[tuple[str, CosyVoice3StreamState]]
