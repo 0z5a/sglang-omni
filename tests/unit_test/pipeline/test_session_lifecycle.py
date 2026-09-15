@@ -120,7 +120,7 @@ async def test_worker_failure_wakes_output_and_fails_session(tmp_path, monkeypat
         # Note (Junnan Li): The pump is parked on the unit's completion future; cleanup waits
         # for the pump, so request waiters must be failed before cleanup is entered.
         entered, release, _ = block_async_call(
-            monkeypatch, coordinator, "_cleanup_session"
+            monkeypatch, coordinator, "_cleanup_session", coordinator._cleanup_session
         )
         failing = asyncio.create_task(
             coordinator.fail_pending_requests("session worker exited")
@@ -273,8 +273,11 @@ async def test_closing_rejects_input_before_cleanup(tmp_path, monkeypatch, trigg
         )
         # Note (Junnan Li): A failed command finalizes through request abort before the
         # pump can start cleanup; admission must already be closed at that seam.
-        seam = "abort" if trigger == "command_timeout" else "_cleanup_session"
-        entered, release, _ = block_async_call(monkeypatch, coordinator, seam)
+        if trigger == "command_timeout":
+            seam, original = "abort", coordinator.abort
+        else:
+            seam, original = "_cleanup_session", coordinator._cleanup_session
+        entered, release, _ = block_async_call(monkeypatch, coordinator, seam, original)
         task = None
         if trigger == "close":
             task = asyncio.create_task(coordinator.close_session(ref))

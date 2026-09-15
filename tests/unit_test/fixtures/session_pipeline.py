@@ -177,9 +177,8 @@ def chunk(seq, eos=False):
     return TimedChunk("audio", seq * 20, 20, seq, b"pcm", eos=eos)
 
 
-def block_async_call(monkeypatch, obj, name):
+def block_async_call(monkeypatch, obj, name, original):
     entered, release, completed = (asyncio.Event() for _ in range(3))
-    original = getattr(obj, name)
 
     async def blocked(*args, **kwargs):
         entered.set()
