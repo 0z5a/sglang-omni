@@ -215,7 +215,7 @@ class CoordinatorSessions:
         session.reading = True
         try:
             while True:
-                while session.outputs:
+                while session.outputs and not session.closing:
                     output, size = session.outputs.popleft()
                     session.output_bytes -= size
                     if output.ref == session.ref or (
@@ -414,7 +414,11 @@ class CoordinatorSessions:
 
     def _begin_session_close(self, session: _Session) -> None:
         session.closing = True
+        # Note (Junnan Li): Close fences output like cancel; queued data is dropped, not drained.
+        session.outputs.clear()
+        session.output_bytes = 0
         session.wake.set()
+        session.output_wake.set()
 
     def _close_session_state(self, session: _Session) -> Coroutine[Any, Any, None]:
         self._begin_session_close(session)

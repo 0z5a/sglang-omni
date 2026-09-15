@@ -312,3 +312,26 @@ async def test_public_submit_rejects_session_metadata(tmp_path):
         with pytest.raises(ValueError, match="reserved"):
             await anext(coordinator.stream("rogue", request))
         assert "rogue" not in coordinator._requests
+
+
+@pytest.mark.asyncio
+async def test_close_fences_queued_outputs(tmp_path):
+    async with pipeline(tmp_path) as (coordinator, events, processes):
+        ref = await coordinator.open_session(
+            OmniRequest(None), stages=["source", "sink"]
+        )
+        output = coordinator.session_outputs(ref)
+        await coordinator.append_session(ref, chunk(0))
+        first = await asyncio.wait_for(anext(output), 5)
+        assert first.kind == "data"
+        session = coordinator._sessions[ref.session_id]
+        await coordinator.append_session(ref, chunk(1, eos=True))
+        for _ in range(500):
+            if session.outputs:
+                break
+            await asyncio.sleep(0.01)
+        assert session.outputs
+        await coordinator.close_session(ref)
+        assert not session.outputs and session.output_bytes == 0
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(anext(output), 5)
