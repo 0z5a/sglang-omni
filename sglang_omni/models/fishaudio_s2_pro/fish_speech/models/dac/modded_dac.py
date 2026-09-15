@@ -666,13 +666,17 @@ class Encoder(nn.Module):
     def __init__(
         self,
         d_model: int = 64,
-        strides: list = [2, 4, 8, 8],
+        strides: Optional[list] = None,
         d_latent: int = 64,
-        n_transformer_layers: list = [0, 0, 4, 4],
+        n_transformer_layers: Optional[list] = None,
         transformer_general_config: ModelArgs = None,
         causal: bool = False,
     ):
         super().__init__()
+        if strides is None:
+            strides = [2, 4, 8, 8]
+        if n_transformer_layers is None:
+            n_transformer_layers = [0, 0, 4, 4]
         conv_class = CausalWNConv1d if causal else WNConv1d
         # Create first convolution
         self.block = [conv_class(1, d_model, kernel_size=7, padding=3)]
@@ -760,10 +764,12 @@ class Decoder(nn.Module):
         rates,
         d_out: int = 1,
         causal: bool = False,
-        n_transformer_layers: list = [0, 0, 0, 0],
+        n_transformer_layers: Optional[list] = None,
         transformer_general_config=None,
     ):
         super().__init__()
+        if n_transformer_layers is None:
+            n_transformer_layers = [0, 0, 0, 0]
         conv_class = CausalWNConv1d if causal else WNConv1d
         # Add first conv layer
         layers = [conv_class(input_channel, channels, kernel_size=7, padding=3)]
@@ -800,19 +806,27 @@ class DAC(BaseModel, CodecMixin):
     def __init__(
         self,
         encoder_dim: int = 64,
-        encoder_rates: List[int] = [2, 4, 8, 8],
+        encoder_rates: Optional[List[int]] = None,
         latent_dim: int = None,
         decoder_dim: int = 1536,
-        decoder_rates: List[int] = [8, 8, 4, 2],
+        decoder_rates: Optional[List[int]] = None,
         quantizer: torch.nn.Module = None,
         sample_rate: int = 44100,
         causal: bool = True,
-        encoder_transformer_layers: List[int] = [0, 0, 0, 0],
-        decoder_transformer_layers: List[int] = [0, 0, 0, 0],
+        encoder_transformer_layers: Optional[List[int]] = None,
+        decoder_transformer_layers: Optional[List[int]] = None,
         overwrite_decoder: torch.nn.Module = None,
         transformer_general_config=None,
     ):
         super().__init__()
+        if encoder_rates is None:
+            encoder_rates = [2, 4, 8, 8]
+        if decoder_rates is None:
+            decoder_rates = [8, 8, 4, 2]
+        if encoder_transformer_layers is None:
+            encoder_transformer_layers = [0, 0, 0, 0]
+        if decoder_transformer_layers is None:
+            decoder_transformer_layers = [0, 0, 0, 0]
 
         self.encoder_dim = encoder_dim
         self.encoder_rates = encoder_rates

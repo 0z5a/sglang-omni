@@ -92,7 +92,7 @@ class Qwen3OmniMoeVisionEncoderConfig(PretrainedConfig):
         temporal_patch_size=2,
         out_hidden_size=3584,
         num_position_embeddings=2304,
-        deepstack_visual_indexes=[8, 16, 24],
+        deepstack_visual_indexes=...,
         tokens_per_second=None,
         initializer_range=0.02,
         **kwargs,
@@ -111,7 +111,9 @@ class Qwen3OmniMoeVisionEncoderConfig(PretrainedConfig):
         self.out_hidden_size = out_hidden_size
         self.num_position_embeddings = num_position_embeddings
         self.initializer_range = initializer_range
-        self.deepstack_visual_indexes = deepstack_visual_indexes
+        self.deepstack_visual_indexes = (
+            [8, 16, 24] if deepstack_visual_indexes is ... else deepstack_visual_indexes
+        )
         self.tokens_per_second = tokens_per_second
 
 

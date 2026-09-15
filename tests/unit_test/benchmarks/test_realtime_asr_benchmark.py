@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from types import EllipsisType
 
 import pytest
 import websockets
@@ -240,8 +241,10 @@ def _trace(
     *,
     sent_packet_s: float = 0.2,
     audio_s: float = 3.0,
-    turn_detection: dict | None = {"type": "server_vad"},
+    turn_detection: dict | None | EllipsisType = ...,
 ) -> SessionTrace:
+    if turn_detection is ...:
+        turn_detection = {"type": "server_vad"}
     trace = SessionTrace(
         url="ws://fake",
         session={
