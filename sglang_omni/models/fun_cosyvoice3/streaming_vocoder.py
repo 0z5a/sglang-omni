@@ -126,13 +126,6 @@ class FunCosyVoice3StreamingVocoderScheduler(
         del request_id
         return CosyVoice3StreamState(hop_len=self.token_hop_len)
 
-    def advance_hop_len(self, state: CosyVoice3StreamState) -> None:
-        state.hop_len = next_stream_hop_len(
-            state.hop_len,
-            max_hop_len=self.token_max_hop_len,
-            disable_growth=self.disable_hop_growth,
-        )
-
     def latch_stream_contract(
         self,
         request_id: str,
@@ -226,8 +219,12 @@ class FunCosyVoice3StreamingVocoderScheduler(
     def on_streaming_new_request(self, request_id: str, payload: StagePayload) -> None:
         super().on_streaming_new_request(request_id, payload)
         state = self.stream_states.get(request_id)
-        if state is not None:
-            self.mark_ready(state)
+        if (
+            state is not None
+            and state.ready_since is None
+            and state.next_decode() != "wait"
+        ):
+            state.ready_since = self.clock()
 
     def ingest(
         self,
@@ -237,19 +234,17 @@ class FunCosyVoice3StreamingVocoderScheduler(
     ) -> None:
         del request_id
         state.tokens.extend(int(token) for token in codes.tolist())
-        self.mark_ready(state)
+        if state.ready_since is None and state.next_decode() != "wait":
+            state.ready_since = self.clock()
 
     def on_stream_done(self, request_id: str) -> list[OutgoingMessage] | None:
         state = self.get_or_create_stream_state(request_id)
         if state is None:
             return []
         state.done = True
-        self.mark_ready(state)
-        return None
-
-    def mark_ready(self, state: CosyVoice3StreamState) -> None:
         if state.ready_since is None and state.next_decode() != "wait":
             state.ready_since = self.clock()
+        return None
 
     def has_ready_work(self) -> bool:
         with self.state_lock:
@@ -315,10 +310,59 @@ class FunCosyVoice3StreamingVocoderScheduler(
             # note (guozhihao-224): B>1 uses packed inference_causal; B=1 keeps
             # native CosyVoice Flow.inference. Packed singleton-vs-row tests
             # cover the batch adapter; native hops stay on the official signature.
-            decoded = self.run_causal_hop_batch(participants)
+            head = participants[0][1]
+            hop = head.hop_len
+            token_offset = head.token_offset
+            token_end = token_offset + hop + PRE_LOOKAHEAD_LEN
+            items = [
+                FlowBatchInput(
+                    token=torch.tensor(
+                        state.tokens[:token_end], dtype=torch.int32
+                    ).unsqueeze(0),
+                    prompt_token=state.prompt_token,
+                    prompt_feat=state.prompt_feat,
+                    embedding=state.embedding,
+                )
+                for _, state in participants
+            ]
+            logger.info(
+                f"Fun-CosyVoice3 causal Flow batch size={len(items)} hop={hop} "
+                f"token_offset={token_offset}"
+            )
+            mels = self.vocoder.first_hop_batch(items)
+            offset_frames = token_offset * TOKEN_MEL_RATIO
+            decoded: dict[str, torch.Tensor] = {}
+            for (request_id, state), mel in zip(participants, mels, strict=True):
+                delta, hift_mel, speech_offset = self.vocoder.hift_delta(
+                    mel[:, :, offset_frames:],
+                    hift_mel=state.hift_mel,
+                    speech_offset=state.speech_offset,
+                    finalize=False,
+                )
+                state.token_offset += hop
+                state.hop_len = next_stream_hop_len(
+                    state.hop_len,
+                    max_hop_len=self.token_max_hop_len,
+                    disable_growth=self.disable_hop_growth,
+                )
+                state.hift_mel = hift_mel
+                state.speech_offset = speech_offset
+                if delta.numel() > 0:
+                    decoded[request_id] = delta
         else:
             request_id, state = participants[0]
-            delta = self.run_one_causal_hop(state)
+            delta = self.run_flow_hift(
+                state,
+                token_end=state.token_offset + state.hop_len + PRE_LOOKAHEAD_LEN,
+                streaming=True,
+                finalize=False,
+            )
+            state.token_offset += state.hop_len
+            state.hop_len = next_stream_hop_len(
+                state.hop_len,
+                max_hop_len=self.token_max_hop_len,
+                disable_growth=self.disable_hop_growth,
+            )
             if delta.numel() > 0:
                 decoded = {request_id: delta}
             else:
@@ -328,59 +372,9 @@ class FunCosyVoice3StreamingVocoderScheduler(
             if request_id in decoded and state.first_emit_at is None:
                 state.first_emit_at = now
             state.ready_since = None
-            self.mark_ready(state)
+            if state.next_decode() != "wait":
+                state.ready_since = self.clock()
         return decoded
-
-    def run_causal_hop_batch(
-        self, participants: list[tuple[str, CosyVoice3StreamState]]
-    ) -> dict[str, torch.Tensor]:
-        head = participants[0][1]
-        hop = head.hop_len
-        token_offset = head.token_offset
-        token_end = token_offset + hop + PRE_LOOKAHEAD_LEN
-        items = [
-            FlowBatchInput(
-                token=torch.tensor(
-                    state.tokens[:token_end], dtype=torch.int32
-                ).unsqueeze(0),
-                prompt_token=state.prompt_token,
-                prompt_feat=state.prompt_feat,
-                embedding=state.embedding,
-            )
-            for _, state in participants
-        ]
-        logger.info(
-            f"Fun-CosyVoice3 causal Flow batch size={len(items)} hop={hop} "
-            f"token_offset={token_offset}"
-        )
-        mels = self.vocoder.first_hop_batch(items)
-        offset_frames = token_offset * TOKEN_MEL_RATIO
-        decoded: dict[str, torch.Tensor] = {}
-        for (request_id, state), mel in zip(participants, mels, strict=True):
-            delta, hift_mel, speech_offset = self.vocoder.hift_delta(
-                mel[:, :, offset_frames:],
-                hift_mel=state.hift_mel,
-                speech_offset=state.speech_offset,
-                finalize=False,
-            )
-            state.token_offset += hop
-            self.advance_hop_len(state)
-            state.hift_mel = hift_mel
-            state.speech_offset = speech_offset
-            if delta.numel() > 0:
-                decoded[request_id] = delta
-        return decoded
-
-    def run_one_causal_hop(self, state: CosyVoice3StreamState) -> torch.Tensor:
-        delta = self.run_flow_hift(
-            state,
-            token_end=state.token_offset + state.hop_len + PRE_LOOKAHEAD_LEN,
-            streaming=True,
-            finalize=False,
-        )
-        state.token_offset += state.hop_len
-        self.advance_hop_len(state)
-        return delta
 
     def decode_delta(
         self,
@@ -394,14 +388,37 @@ class FunCosyVoice3StreamingVocoderScheduler(
             if state.next_decode() != "causal_window":
                 return None
             else:
-                delta = self.run_one_causal_hop(state)
+                delta = self.run_flow_hift(
+                    state,
+                    token_end=state.token_offset + state.hop_len + PRE_LOOKAHEAD_LEN,
+                    streaming=True,
+                    finalize=False,
+                )
+                state.token_offset += state.hop_len
+                state.hop_len = next_stream_hop_len(
+                    state.hop_len,
+                    max_hop_len=self.token_max_hop_len,
+                    disable_growth=self.disable_hop_growth,
+                )
                 if delta.numel() > 0:
                     return delta
                 else:
                     return None
         pieces: list[torch.Tensor] = []
         while state.next_decode() == "causal_window":
-            pieces.append(self.run_one_causal_hop(state))
+            delta = self.run_flow_hift(
+                state,
+                token_end=state.token_offset + state.hop_len + PRE_LOOKAHEAD_LEN,
+                streaming=True,
+                finalize=False,
+            )
+            state.token_offset += state.hop_len
+            state.hop_len = next_stream_hop_len(
+                state.hop_len,
+                max_hop_len=self.token_max_hop_len,
+                disable_growth=self.disable_hop_growth,
+            )
+            pieces.append(delta)
         if state.tokens:
             # note (guozhihao-224): leftover keeps finalize=True so HiFT
             # flushes and pre_lookahead consumes the tail. DiT stays
