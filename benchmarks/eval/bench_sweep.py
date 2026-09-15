@@ -86,6 +86,7 @@ def _spawn_client(out, stage_dir, per_client_rate, samples, offset, i):
         cmd.extend(["--ref-format", "references"])
     else:
         cmd.append("--no-ref-audio")
+    # Return the log open; the caller closes it during client cleanup.
     with ExitStack() as stack:
         logf = stack.enter_context(open(os.path.join(stage_dir, f"client{i}.log"), "w"))
         preexec = None

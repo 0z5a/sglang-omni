@@ -204,6 +204,7 @@ def start_server_from_cmd(
     elif tee:
         # Tee (file + stdout): TP=2 fixture wants the file for grep + live
         # output for `pytest -s`. Pattern from sglang's popen_launch_server.
+        # Keep the log open after return; the tee thread closes it in finally.
         with ExitStack() as stack:
             log_handle = stack.enter_context(open(log_file, "w"))
             proc = subprocess.Popen(
@@ -227,7 +228,6 @@ def start_server_from_cmd(
                     src.close()
                     sink.close()
 
-            # log_handle ownership is handed to the thread; its finally closes it.
             threading.Thread(
                 target=_tee_stdout,
                 args=(proc.stdout, log_handle),

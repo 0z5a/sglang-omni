@@ -168,6 +168,7 @@ def create_control_plane_app(
     admission_view: AdmissionAggregateView | None = None
     admission_shm_file = None
     if admission_shm_path and expected_data_planes:
+        # Keep the existing file lifetime: the app's lifespan closes it.
         with ExitStack() as stack:
             admission_shm_file = stack.enter_context(open(admission_shm_path, "rb"))
             admission_view = AdmissionAggregateView(

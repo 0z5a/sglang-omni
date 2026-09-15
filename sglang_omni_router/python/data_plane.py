@@ -767,6 +767,7 @@ def create_dp_app_from_env() -> FastAPI:
     generation = int(os.environ[DP_GENERATION_ENV])
     total = int(os.environ.get(EXPECTED_DPS_ENV, "1"))
 
+    # Preserve the returned app's ownership of the open file.
     with ExitStack() as stack:
         admission = None
         shm_path = os.environ.get(ADMISSION_SHM_ENV)
@@ -797,7 +798,6 @@ def create_dp_app_from_env() -> FastAPI:
             admission=admission,
             total_data_planes=total,
         )
-        # Note (Jiaxin Deng): keep the shm file object alive for the app's lifetime.
         app.state.admission_shm_file = admission_file
         stack.pop_all()
         return app
