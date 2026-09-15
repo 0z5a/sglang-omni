@@ -94,16 +94,17 @@ class FunCosyVoice3StreamingVocoderScheduler(
         max_hop = int(token_max_hop_len)
         if hop <= 0:
             raise ValueError(f"token_hop_len must be positive, got {token_hop_len}")
-        if max_hop < hop:
+        elif max_hop < hop:
             raise ValueError(
                 f"token_max_hop_len ({token_max_hop_len}) must be >= "
                 f"token_hop_len ({token_hop_len})"
             )
-        self.token_hop_len = hop
-        self.token_max_hop_len = max_hop
-        self.disable_hop_growth = bool(disable_hop_growth)
-        self.vocoder = vocoder
-        self.clock: Callable[[], float] = time.monotonic
+        else:
+            self.token_hop_len = hop
+            self.token_max_hop_len = max_hop
+            self.disable_hop_growth = bool(disable_hop_growth)
+            self.vocoder = vocoder
+            self.clock: Callable[[], float] = time.monotonic
         super().__init__(
             self.vocode_payload,
             batch_compute_fn=self.vocode_payloads,
@@ -141,31 +142,34 @@ class FunCosyVoice3StreamingVocoderScheduler(
                     f"Fun-CosyVoice3 streaming payload for {request_id!r} must "
                     f"be a StagePayload, got {type(payload).__name__}"
                 )
-            pipeline_state = FunCosyVoice3State.from_dict(payload.data)
-            self.latch_prompts(
-                request_id,
-                state,
-                prompt_token=pipeline_state.flow_prompt_speech_token,
-                prompt_feat=pipeline_state.flow_prompt_speech_feat,
-                embedding=pipeline_state.flow_embedding,
-            )
-            return
-        metadata: Mapping[str, Any] = source
-        if any(
-            key in metadata
-            for key in (
-                "flow_prompt_speech_token",
-                "flow_prompt_speech_feat",
-                "flow_embedding",
-            )
-        ):
-            self.latch_prompts(
-                request_id,
-                state,
-                prompt_token=metadata.get("flow_prompt_speech_token"),
-                prompt_feat=metadata.get("flow_prompt_speech_feat"),
-                embedding=metadata.get("flow_embedding"),
-            )
+            else:
+                pipeline_state = FunCosyVoice3State.from_dict(payload.data)
+                self.latch_prompts(
+                    request_id,
+                    state,
+                    prompt_token=pipeline_state.flow_prompt_speech_token,
+                    prompt_feat=pipeline_state.flow_prompt_speech_feat,
+                    embedding=pipeline_state.flow_embedding,
+                )
+        else:
+            metadata: Mapping[str, Any] = source
+            if any(
+                key in metadata
+                for key in (
+                    "flow_prompt_speech_token",
+                    "flow_prompt_speech_feat",
+                    "flow_embedding",
+                )
+            ):
+                self.latch_prompts(
+                    request_id,
+                    state,
+                    prompt_token=metadata.get("flow_prompt_speech_token"),
+                    prompt_feat=metadata.get("flow_prompt_speech_feat"),
+                    embedding=metadata.get("flow_embedding"),
+                )
+            else:
+                return
 
     def latch_prompts(
         self,
@@ -183,21 +187,22 @@ class FunCosyVoice3StreamingVocoderScheduler(
         # first generated hop stays hop+lookahead instead of waiting for
         # prompt_pad extra AR tokens.
         token, feat = pad_flow_prompt_to_hop(token, feat, hop_len=self.token_hop_len)
-        if state.prompt_token is not None:
+        if state.prompt_token is None:
+            state.prompt_token = token
+            state.prompt_feat = feat
+            state.embedding = speaker_embedding
+        elif (
+            tuple(token.shape) != tuple(state.prompt_token.shape)
+            or tuple(feat.shape) != tuple(state.prompt_feat.shape)
+            or tuple(speaker_embedding.shape) != tuple(state.embedding.shape)
+        ):
             # note (guozhihao-224): latch is shape-stable; payload and first
             # chunk metadata must carry the same prompt tensors.
-            if (
-                tuple(token.shape) != tuple(state.prompt_token.shape)
-                or tuple(feat.shape) != tuple(state.prompt_feat.shape)
-                or tuple(speaker_embedding.shape) != tuple(state.embedding.shape)
-            ):
-                raise ValueError(
-                    f"Fun-CosyVoice3 stream prompt tensors changed for {request_id!r}"
-                )
+            raise ValueError(
+                f"Fun-CosyVoice3 stream prompt tensors changed for {request_id!r}"
+            )
+        else:
             return
-        state.prompt_token = token
-        state.prompt_feat = feat
-        state.embedding = speaker_embedding
 
     def validate_chunk(
         self,
@@ -208,23 +213,25 @@ class FunCosyVoice3StreamingVocoderScheduler(
         del request_id, state
         chunk = codes.to(dtype=torch.long)
         if chunk.ndim == 2 and chunk.shape[-1] == 1:
-            chunk = chunk.reshape(-1)
-        if chunk.ndim != 1:
+            return chunk.reshape(-1).contiguous()
+        elif chunk.ndim != 1:
             raise ValueError(
                 f"Fun-CosyVoice3 stream chunk must be 1-D speech tokens, "
                 f"got {tuple(chunk.shape)}"
             )
-        return chunk.contiguous()
+        else:
+            return chunk.contiguous()
 
     def on_streaming_new_request(self, request_id: str, payload: StagePayload) -> None:
         super().on_streaming_new_request(request_id, payload)
         state = self.stream_states.get(request_id)
-        if (
-            state is not None
-            and state.ready_since is None
-            and state.next_decode() != "wait"
-        ):
-            state.ready_since = self.clock()
+        if state is None:
+            return
+        elif state.ready_since is None and state.next_decode() != "wait":
+            ready_since = self.clock()
+        else:
+            ready_since = state.ready_since
+        state.ready_since = ready_since
 
     def ingest(
         self,
@@ -235,23 +242,34 @@ class FunCosyVoice3StreamingVocoderScheduler(
         del request_id
         state.tokens.extend(int(token) for token in codes.tolist())
         if state.ready_since is None and state.next_decode() != "wait":
-            state.ready_since = self.clock()
+            ready_since = self.clock()
+        else:
+            ready_since = state.ready_since
+        state.ready_since = ready_since
 
     def on_stream_done(self, request_id: str) -> list[OutgoingMessage] | None:
         state = self.get_or_create_stream_state(request_id)
         if state is None:
             return []
-        state.done = True
-        if state.ready_since is None and state.next_decode() != "wait":
-            state.ready_since = self.clock()
-        return None
+        else:
+            state.done = True
+            if state.ready_since is None and state.next_decode() != "wait":
+                ready_since = self.clock()
+            else:
+                ready_since = state.ready_since
+            state.ready_since = ready_since
+            return None
 
     def has_ready_work(self) -> bool:
         with self.state_lock:
-            for request_id, state in self.stream_state_items():
-                if state.next_decode() != "wait" and not self.is_aborted(request_id):
-                    return True
-            return False
+            ready = any(
+                state.next_decode() != "wait" and not self.is_aborted(request_id)
+                for request_id, state in self.stream_state_items()
+            )
+            if ready:
+                return True
+            else:
+                return False
 
     def select_step_participants(
         self,
@@ -274,20 +292,21 @@ class FunCosyVoice3StreamingVocoderScheduler(
         ready.sort()
         if not ready:
             return []
-        _, _, head_id, head = ready[0]
-        # note (ratish): least playback slack first; same token window joins
-        # so equal-shape causal Flow calls share one packed inference
-        if head.next_decode() == "leftover":
-            return [(head_id, head)]
         else:
-            token_window = (head.token_offset, head.hop_len)
-            peers = [
-                (request_id, state)
-                for _, _, request_id, state in ready
-                if state.next_decode() == "causal_window"
-                and (state.token_offset, state.hop_len) == token_window
-            ]
-            return peers[: self.max_batch_size]
+            _, _, head_id, head = ready[0]
+            # note (ratish): least playback slack first; same token window joins
+            # so equal-shape causal Flow calls share one packed inference
+            if head.next_decode() == "leftover":
+                return [(head_id, head)]
+            else:
+                token_window = (head.token_offset, head.hop_len)
+                peers = [
+                    (request_id, state)
+                    for _, _, request_id, state in ready
+                    if state.next_decode() == "causal_window"
+                    and (state.token_offset, state.hop_len) == token_window
+                ]
+                return peers[: self.max_batch_size]
 
     def build_step_plan(
         self, participants: list[tuple[str, CosyVoice3StreamState]]
@@ -349,6 +368,8 @@ class FunCosyVoice3StreamingVocoderScheduler(
                 state.speech_offset = speech_offset
                 if delta.numel() > 0:
                     decoded[request_id] = delta
+                else:
+                    continue
         else:
             request_id, state = participants[0]
             delta = self.run_flow_hift(
@@ -370,10 +391,14 @@ class FunCosyVoice3StreamingVocoderScheduler(
         now = self.clock()
         for request_id, state in participants:
             if request_id in decoded and state.first_emit_at is None:
-                state.first_emit_at = now
-            state.ready_since = None
+                first_emit_at = now
+            else:
+                first_emit_at = state.first_emit_at
+            state.first_emit_at = first_emit_at
             if state.next_decode() != "wait":
                 state.ready_since = self.clock()
+            else:
+                state.ready_since = None
         return decoded
 
     def decode_delta(
@@ -404,38 +429,43 @@ class FunCosyVoice3StreamingVocoderScheduler(
                     return delta
                 else:
                     return None
-        pieces: list[torch.Tensor] = []
-        while state.next_decode() == "causal_window":
-            delta = self.run_flow_hift(
-                state,
-                token_end=state.token_offset + state.hop_len + PRE_LOOKAHEAD_LEN,
-                streaming=True,
-                finalize=False,
-            )
-            state.token_offset += state.hop_len
-            state.hop_len = next_stream_hop_len(
-                state.hop_len,
-                max_hop_len=self.token_max_hop_len,
-                disable_growth=self.disable_hop_growth,
-            )
-            pieces.append(delta)
-        if state.tokens:
-            # note (guozhihao-224): leftover keeps finalize=True so HiFT
-            # flushes and pre_lookahead consumes the tail. DiT stays
-            # bidirectional; leftover streaming=True did not win the A/B.
-            pieces.append(
-                self.run_flow_hift(
+        else:
+            pieces: list[torch.Tensor] = []
+            while state.next_decode() == "causal_window":
+                delta = self.run_flow_hift(
+                    state,
+                    token_end=state.token_offset + state.hop_len + PRE_LOOKAHEAD_LEN,
+                    streaming=True,
+                    finalize=False,
+                )
+                state.token_offset += state.hop_len
+                state.hop_len = next_stream_hop_len(
+                    state.hop_len,
+                    max_hop_len=self.token_max_hop_len,
+                    disable_growth=self.disable_hop_growth,
+                )
+                pieces.append(delta)
+            if state.tokens:
+                # note (guozhihao-224): leftover keeps finalize=True so HiFT
+                # flushes and pre_lookahead consumes the tail. DiT stays
+                # bidirectional; leftover streaming=True did not win the A/B.
+                leftover = self.run_flow_hift(
                     state,
                     token_end=len(state.tokens),
                     streaming=LEFTOVER_FLOW_STREAMING,
                     finalize=True,
                 )
-            )
-        pieces = [piece for piece in pieces if piece.numel() > 0]
-        if not pieces:
-            return None
-        else:
-            return torch.cat(pieces, dim=-1)
+            else:
+                leftover = None
+            if leftover is None:
+                candidates = pieces
+            else:
+                candidates = pieces + [leftover]
+            pieces = [piece for piece in candidates if piece.numel() > 0]
+            if not pieces:
+                return None
+            else:
+                return torch.cat(pieces, dim=-1)
 
     def run_flow_hift(
         self,
@@ -479,9 +509,10 @@ class FunCosyVoice3StreamingVocoderScheduler(
             raise RuntimeError(
                 "Fun-CosyVoice3 generation produced no usable speech tokens"
             )
-        prompt_token = as_flow_prompt_token(pipeline_state.flow_prompt_speech_token)
-        prompt_feat = as_flow_prompt_feat(pipeline_state.flow_prompt_speech_feat)
-        embedding = as_flow_embedding(pipeline_state.flow_embedding)
+        else:
+            prompt_token = as_flow_prompt_token(pipeline_state.flow_prompt_speech_token)
+            prompt_feat = as_flow_prompt_feat(pipeline_state.flow_prompt_speech_feat)
+            embedding = as_flow_embedding(pipeline_state.flow_embedding)
         return self.vocoder.token2wav(
             token=codes.unsqueeze(0),
             prompt_token=prompt_token,
@@ -502,9 +533,11 @@ class FunCosyVoice3StreamingVocoderScheduler(
         }
         pipeline_state = FunCosyVoice3State.from_dict(payload.data)
         usage = build_usage(pipeline_state)
-        if usage is not None:
+        if usage is None:
+            return final_data
+        else:
             final_data["usage"] = usage
-        return final_data
+            return final_data
 
     def stream_payload(self, request_id: str, waveform: torch.Tensor) -> dict[str, Any]:
         del request_id
